@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">AppBethela</string>
+    <string name="tv_no_file_count">No operations specified</string>
+    <string name="tv_no_save_path">Select a directory</string>
+    <string name="tv_no_no_files"></string>
+
+</resources>
