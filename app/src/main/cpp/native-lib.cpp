@@ -14,6 +14,18 @@
 using namespace Krypt;
 using namespace Jpp;
 
+constexpr static jsize MB = 16;
+constexpr static jsize BUFFER_SIZE = MB * 1024 * 1024;
+
+/// 5 characters.
+constexpr static size_t FILE_EXTENSION_SIZE = 5;
+
+/// 7 byte file signature.
+constexpr static jint FILE_SIGNATURE_SIZE = 7;
+
+/// the size of one AES block in bytes.
+constexpr static jint AES_BLOCK_SIZE = 16;
+
 extern "C" JNIEXPORT jstring JNICALL Java_com_application_bethela_BethelaActivity_doubleString (
   JNIEnv *env,
   jobject,
@@ -177,15 +189,14 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
   std::atomic<size_t> cnt(0);
   std::mutex vector_mtx;
 
-  constexpr jsize bufferSize = 1 * 1024 * 1024;
-  if (bufferSize % 16 != 0 || bufferSize <= 16) {
+  if (BUFFER_SIZE % AES_BLOCK_SIZE != 0 || BUFFER_SIZE <= AES_BLOCK_SIZE) {
     return 0xffffffff; // invalid buffer size
   }
 
   auto encrypt_lambda = [&] () -> void {
     bool run_thread = true;
 
-    Bytes *encryptedBuffer = new Bytes[bufferSize];
+    Bytes *encryptedBuffer = new Bytes[BUFFER_SIZE];
 
     while (run_thread) {
       try {
@@ -227,18 +238,16 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
 
         OutputStream outgoing_bytes = Activity(env, thiz).getApplicationContext().getContentResolver().openOutputStream(outputFile.getUri());
 
-        constexpr jint fileSignatureSize = 7;
-        jbyteArray fileSignature = env->NewByteArray(fileSignatureSize);
-        const jbyte fileSig[fileSignatureSize] = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
-        env->SetByteArrayRegion(fileSignature, 0, fileSignatureSize, fileSig);
-        outgoing_bytes.write(fileSignature, 0, fileSignatureSize);
+        jbyteArray fileSignature = env->NewByteArray(FILE_SIGNATURE_SIZE);
+        const jbyte fileSig[FILE_SIGNATURE_SIZE] = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
+        env->SetByteArrayRegion(fileSignature, 0, FILE_SIGNATURE_SIZE, fileSig);
+        outgoing_bytes.write(fileSignature, 0, FILE_SIGNATURE_SIZE);
 
-        constexpr jint AES_BLOCK = 16;
         jint length;
-        jbyteArray jniBuffer = env->NewByteArray(bufferSize);
+        jbyteArray jniBuffer = env->NewByteArray(BUFFER_SIZE);
 
         // generate random IV
-        unsigned char iv[AES_BLOCK];
+        unsigned char iv[AES_BLOCK_SIZE];
 
         unsigned seed = std::chrono::steady_clock::now().time_since_epoch().count();
         std::mt19937 rand_engine(seed);
@@ -247,19 +256,19 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
           std::numeric_limits<int>::max()
         );
 
-        for(size_t i = 0; i < AES_BLOCK; ++i) {
+        for(size_t i = 0; i < AES_BLOCK_SIZE; ++i) {
           iv[i] = random_number(rand_engine);
         }
 
-        jbyteArray jniIV = env->NewByteArray(AES_BLOCK);
-        env->SetByteArrayRegion(jniIV, 0, AES_BLOCK, reinterpret_cast<jbyte *>(iv));
-        outgoing_bytes.write(jniIV, 0, AES_BLOCK);
+        jbyteArray jniIV = env->NewByteArray(AES_BLOCK_SIZE);
+        env->SetByteArrayRegion(jniIV, 0, AES_BLOCK_SIZE, reinterpret_cast<jbyte *>(iv));
+        outgoing_bytes.write(jniIV, 0, AES_BLOCK_SIZE);
 
         while ((length = incoming_bytes.read(jniBuffer)) > 0) {
           jbyte *buffer = (jbyte *) env->GetPrimitiveArrayCritical(jniBuffer, NULL);
 
-          if (length == bufferSize) {
-            for (size_t index = 0; index < length; index += AES_BLOCK) {
+          if (length == BUFFER_SIZE) {
+            for (size_t index = 0; index < length; index += AES_BLOCK_SIZE) {
               aes_scheme.blockEncrypt(
                 reinterpret_cast<unsigned char *>(buffer + index),
                 reinterpret_cast<unsigned char *>(encryptedBuffer + index),
@@ -273,26 +282,26 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
               reinterpret_cast<jbyte *>(encryptedBuffer));
             outgoing_bytes.write(jniBuffer, 0, length);
           } else {
-            size_t remaining_blocks = length / AES_BLOCK;
+            size_t remaining_blocks = length / AES_BLOCK_SIZE;
             size_t index;
 
             for (index = 0; index < remaining_blocks - 1; ++index) {
               aes_scheme.blockEncrypt(
-                reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK)),
-                reinterpret_cast<unsigned char *>(encryptedBuffer + (index * AES_BLOCK)),
+                reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK_SIZE)),
+                reinterpret_cast<unsigned char *>(encryptedBuffer + (index * AES_BLOCK_SIZE)),
                 reinterpret_cast<unsigned char *>(iv)
               );
             }
 
             env->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
             env->SetByteArrayRegion(
-              jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK,
+              jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK_SIZE,
               reinterpret_cast<jbyte *>(encryptedBuffer));
-            outgoing_bytes.write(jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK);
+            outgoing_bytes.write(jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK_SIZE);
 
             ByteArray recover = aes_scheme.encrypt(
-              reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK)),
-              AES_BLOCK, reinterpret_cast<unsigned char *>(iv)
+              reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK_SIZE)),
+              AES_BLOCK_SIZE, reinterpret_cast<unsigned char *>(iv)
             );
 
             env->SetByteArrayRegion(
@@ -342,15 +351,14 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
   std::atomic<size_t> cnt(0);
   std::mutex vector_mtx;
 
-  constexpr jsize bufferSize = 1 * 1024 * 1024;
-  if (bufferSize % 16 != 0 || bufferSize <= 16) {
+  if (BUFFER_SIZE % AES_BLOCK_SIZE != 0 || BUFFER_SIZE <= AES_BLOCK_SIZE) {
     return 0xffffffff; // invalid buffer size
   }
 
   auto decrypt_lambda = [&] () -> void {
     bool run_thread = true;
 
-    Bytes *decryptedBuffer = new Bytes[bufferSize];
+    Bytes *decryptedBuffer = new Bytes[BUFFER_SIZE];
 
     while (run_thread) {
       try {
@@ -381,12 +389,11 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
         std::string outfname(target_file);
         std::string fileExtension = "";
 
-        constexpr size_t filename_extension_size = 5;
-        if (outfname.size() > filename_extension_size) {
-          fileExtension = outfname.substr(outfname.size() - filename_extension_size, filename_extension_size);
+        if (outfname.size() > FILE_EXTENSION_SIZE) {
+          fileExtension = outfname.substr(outfname.size() - FILE_EXTENSION_SIZE, FILE_EXTENSION_SIZE);
         }
 
-        outfname = outfname.substr(0, outfname.size() - filename_extension_size);
+        outfname = outfname.substr(0, outfname.size() - FILE_EXTENSION_SIZE);
 
         jstring jniOutputFileName = env->NewStringUTF(outfname.c_str());
 
@@ -401,23 +408,21 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 
         OutputStream outgoing_bytes = Activity(env, thiz).getApplicationContext().getContentResolver().openOutputStream(outputFile.getUri());
 
-        constexpr jint fileSignatureSize = 7;
-        jbyteArray fileSignature = env->NewByteArray(fileSignatureSize);
+        jbyteArray fileSignature = env->NewByteArray(FILE_SIGNATURE_SIZE);
         incoming_bytes.read(fileSignature);
 
-        const jbyte fileSig[fileSignatureSize] = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
+        const jbyte fileSig[FILE_SIGNATURE_SIZE] = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
         jbyte *fileSigRead = env->GetByteArrayElements(fileSignature, NULL);
 
-        constexpr jint AES_BLOCK = 16;
         jint length;
-        jbyteArray jniBuffer = env->NewByteArray(bufferSize);
-        jbyteArray jniIV = env->NewByteArray(AES_BLOCK);
+        jbyteArray jniBuffer = env->NewByteArray(BUFFER_SIZE);
+        jbyteArray jniIV = env->NewByteArray(AES_BLOCK_SIZE);
         incoming_bytes.read(jniIV);
         jbyte *iv = env->GetByteArrayElements(jniIV, NULL);
 
         std::string properFileExtension = ".bthl";
 
-        jboolean signFailed = std::memcmp(fileSigRead, fileSig, fileSignatureSize);
+        jboolean signFailed = std::memcmp(fileSigRead, fileSig, FILE_SIGNATURE_SIZE);
         jboolean wrongFileExtension = fileExtension != properFileExtension;
         jboolean JNIException = env->ExceptionCheck();
 
@@ -436,8 +441,8 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
         while ((length = incoming_bytes.read(jniBuffer)) > 0) {
           jbyte *buffer = (jbyte *) env->GetPrimitiveArrayCritical(jniBuffer, NULL);
 
-          if (length == bufferSize) {
-            for (size_t index = 0; index < length; index += AES_BLOCK) {
+          if (length == BUFFER_SIZE) {
+            for (size_t index = 0; index < length; index += AES_BLOCK_SIZE) {
               aes_scheme.blockDecrypt(
                 reinterpret_cast<unsigned char *>(buffer + index),
                 reinterpret_cast<unsigned char *>(decryptedBuffer + index),
@@ -451,26 +456,26 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
               reinterpret_cast<jbyte *>(decryptedBuffer));
             outgoing_bytes.write(jniBuffer, 0, length);
           } else {
-            size_t remaining_blocks = length / AES_BLOCK;
+            size_t remaining_blocks = length / AES_BLOCK_SIZE;
             size_t index;
 
             for (index = 0; index < remaining_blocks - 1; ++index) {
               aes_scheme.blockDecrypt(
-                reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK)),
-                reinterpret_cast<unsigned char *>(decryptedBuffer + (index * AES_BLOCK)),
+                reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK_SIZE)),
+                reinterpret_cast<unsigned char *>(decryptedBuffer + (index * AES_BLOCK_SIZE)),
                 reinterpret_cast<unsigned char *>(iv)
               );
             }
 
             env->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
             env->SetByteArrayRegion(
-              jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK,
+              jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK_SIZE,
               reinterpret_cast<jbyte *>(decryptedBuffer));
-            outgoing_bytes.write(jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK);
+            outgoing_bytes.write(jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK_SIZE);
 
             ByteArray recover = aes_scheme.decrypt(
-              reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK)),
-              AES_BLOCK, reinterpret_cast<unsigned char *>(iv)
+              reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK_SIZE)),
+              AES_BLOCK_SIZE, reinterpret_cast<unsigned char *>(iv)
             );
 
             env->SetByteArrayRegion(
