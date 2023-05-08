@@ -225,7 +225,24 @@ public class BethelaActivity extends AppCompatActivity {
     }
 
     public void btnEncryptFiles (View v) {
+        if (ready()) {
+            byte[] key = getKeyFile(uriKeyFile);
 
+            try {
+                int res = encryptFiles(key, urisFiles, uriOutputFolder);
+
+                int fail_bit = (res >> 31) & 0x1;
+
+                if (fail_bit == 0x1) {
+                    res = ~((0x1 << 31) | ~res);
+                    Toast.makeText(this, "Some files(" + res + ") encrypted, others FAILED!", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, "All files(" + res + ") encrypted", Toast.LENGTH_SHORT).show();
+                }
+            } catch (Exception err) {
+                Log.d("operation error: ", err.getMessage());
+            }
+        }
     }
 
     public void btnDecryptFiles (View v) {
@@ -252,6 +269,6 @@ public class BethelaActivity extends AppCompatActivity {
     // #####################################################################
     //                     NATIVE METHODS
 
-    private native void encryptFiles(byte[] keyFile, ArrayList<Uri> targetFiles, Uri outputPath);
+    private native int encryptFiles(byte[] keyFile, ArrayList<Uri> targetFiles, Uri outputPath);
     private native int decryptFiles(byte[] keyFile, ArrayList<Uri> targetFiles, Uri outputPath);
 }

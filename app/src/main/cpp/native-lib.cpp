@@ -5,6 +5,9 @@
 #include <vector>
 #include <mutex>
 #include <atomic>
+#include <random>
+#include <chrono>
+#include <limits>
 #include "Krypt/src/Krypt.hpp"
 #include "jpp.hpp"
 
@@ -155,13 +158,169 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_application_bethela_BethelaActivit
   return getFileName(env, thiz, file_uri);
 }
 
-extern "C" JNIEXPORT void JNICALL Java_com_application_bethela_BethelaActivity_encryptFiles (
+extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_encryptFiles (
   JNIEnv *env, jobject thiz,
   jbyteArray key_file,
   jobject target_files,
   jobject output_path
 ) {
-  // TODO: implement encryptFiles()
+  ArrayList<Uri> file_queue(env, target_files);
+
+  jbyte *aeskey = env->GetByteArrayElements(key_file, nullptr);
+  jint aeskey_size = env->GetArrayLength(key_file);
+
+  Mode::CBC<BlockCipher::AES, Padding::PKCS_5_7> aes_scheme(
+    reinterpret_cast<Bytes *>(aeskey),
+    aeskey_size
+  );
+
+  std::atomic<size_t> cnt(0);
+  std::mutex vector_mtx;
+
+  constexpr jsize bufferSize = 1 * 1024 * 1024;
+  if (bufferSize % 16 != 0 || bufferSize <= 16) {
+    return 0xffffffff; // invalid buffer size
+  }
+
+  auto encrypt_lambda = [&] () -> void {
+    bool run_thread = true;
+
+    Bytes *encryptedBuffer = new Bytes[bufferSize];
+
+    while (run_thread) {
+      try {
+        std::string target_file;
+        Uri target_uri(env, NULL);
+
+        vector_mtx.lock();
+        run_thread = !file_queue.isEmpty();
+
+        if (run_thread) {
+          target_uri._thiz = file_queue.remove(file_queue.size() - 1)._thiz;
+          jstring filename = getFileName(env, thiz, target_uri._thiz);
+          const char *c_filename_buffer = env->GetStringUTFChars(filename, NULL);
+          target_file = std::string(c_filename_buffer);
+          env->ReleaseStringUTFChars(filename, c_filename_buffer);
+        } else {
+          vector_mtx.unlock();
+          break;
+        }
+
+        vector_mtx.unlock();
+
+        InputStream incoming_bytes = InputStream(
+          env,
+          openFileUriInputStream(env, thiz, target_uri._thiz)
+        );
+
+        std::string outfname(target_file + ".bthl");
+        jstring jniOutputFileName = env->NewStringUTF(outfname.c_str());
+
+        jstring mimeType = env->NewStringUTF("application/octet-stream");
+        DocumentFile folder = DocumentFile::fromTreeUri(
+          env,
+          Activity(env, thiz).getApplicationContext(),
+          Uri(env, output_path)
+        );
+
+        DocumentFile outputFile = folder.createFile(mimeType, jniOutputFileName);
+
+        OutputStream outgoing_bytes = Activity(env, thiz).getApplicationContext().getContentResolver().openOutputStream(outputFile.getUri());
+
+        constexpr jint fileSignatureSize = 7;
+        jbyteArray fileSignature = env->NewByteArray(fileSignatureSize);
+        const jbyte fileSig[fileSignatureSize] = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
+        env->SetByteArrayRegion(fileSignature, 0, fileSignatureSize, fileSig);
+        outgoing_bytes.write(fileSignature, 0, fileSignatureSize);
+
+        constexpr jint AES_BLOCK = 16;
+        jint length;
+        jbyteArray jniBuffer = env->NewByteArray(bufferSize);
+
+        // generate random IV
+        unsigned char iv[AES_BLOCK];
+
+        unsigned seed = std::chrono::steady_clock::now().time_since_epoch().count();
+        std::mt19937 rand_engine(seed);
+        std::uniform_int_distribution<int> random_number(
+          std::numeric_limits<int>::min(),
+          std::numeric_limits<int>::max()
+        );
+
+        for(size_t i = 0; i < AES_BLOCK; ++i) {
+          iv[i] = random_number(rand_engine);
+        }
+
+        jbyteArray jniIV = env->NewByteArray(AES_BLOCK);
+        env->SetByteArrayRegion(jniIV, 0, AES_BLOCK, reinterpret_cast<jbyte *>(iv));
+        outgoing_bytes.write(jniIV, 0, AES_BLOCK);
+
+        while ((length = incoming_bytes.read(jniBuffer)) > 0) {
+          jbyte *buffer = (jbyte *) env->GetPrimitiveArrayCritical(jniBuffer, NULL);
+
+          if (length == bufferSize) {
+            for (size_t index = 0; index < length; index += AES_BLOCK) {
+              aes_scheme.blockEncrypt(
+                reinterpret_cast<unsigned char *>(buffer + index),
+                reinterpret_cast<unsigned char *>(encryptedBuffer + index),
+                reinterpret_cast<unsigned char *>(iv)
+              );
+            }
+
+            env->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
+            env->SetByteArrayRegion(
+              jniBuffer, 0, length,
+              reinterpret_cast<jbyte *>(encryptedBuffer));
+            outgoing_bytes.write(jniBuffer, 0, length);
+          } else {
+            size_t remaining_blocks = length / AES_BLOCK;
+            size_t index;
+
+            for (index = 0; index < remaining_blocks - 1; ++index) {
+              aes_scheme.blockEncrypt(
+                reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK)),
+                reinterpret_cast<unsigned char *>(encryptedBuffer + (index * AES_BLOCK)),
+                reinterpret_cast<unsigned char *>(iv)
+              );
+            }
+
+            env->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
+            env->SetByteArrayRegion(
+              jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK,
+              reinterpret_cast<jbyte *>(encryptedBuffer));
+            outgoing_bytes.write(jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK);
+
+            ByteArray recover = aes_scheme.encrypt(
+              reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK)),
+              AES_BLOCK, reinterpret_cast<unsigned char *>(iv)
+            );
+
+            env->SetByteArrayRegion(
+              jniBuffer, 0, recover.length,
+              reinterpret_cast<jbyte *>(recover.array));
+            outgoing_bytes.write(jniBuffer, 0, recover.length);
+          }
+        }
+
+        if (env->ExceptionCheck()) {
+          env->ExceptionDescribe();
+          outgoing_bytes.close();
+          outputFile.Delete();
+        } else {
+          cnt++;
+        }
+      } catch (...) {
+        continue;
+      }
+    }
+
+    delete[] encryptedBuffer;
+  };
+
+  // TODO: implement multi-threading
+  encrypt_lambda();
+
+  return cnt.load(std::memory_order_relaxed);
 }
 
 extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_decryptFiles (
@@ -224,10 +383,10 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 
         constexpr size_t filename_extension_size = 5;
         if (outfname.size() > filename_extension_size) {
-          fileExtension = outfname.substr(outfname.size() - 5, 5);
+          fileExtension = outfname.substr(outfname.size() - filename_extension_size, filename_extension_size);
         }
 
-        outfname = outfname.substr(0, outfname.size() - 5);
+        outfname = outfname.substr(0, outfname.size() - filename_extension_size);
 
         jstring jniOutputFileName = env->NewStringUTF(outfname.c_str());
 
@@ -246,7 +405,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
         jbyteArray fileSignature = env->NewByteArray(fileSignatureSize);
         incoming_bytes.read(fileSignature);
 
-        jbyte fileSig[fileSignatureSize] = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
+        const jbyte fileSig[fileSignatureSize] = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
         jbyte *fileSigRead = env->GetByteArrayElements(fileSignature, NULL);
 
         constexpr jint AES_BLOCK = 16;
@@ -321,14 +480,15 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
           }
         }
 
+        env->ReleaseByteArrayElements(jniIV, iv, 0);
+
         if (env->ExceptionCheck()) {
           env->ExceptionDescribe();
           outgoing_bytes.close();
           outputFile.Delete();
+        } else {
+          cnt++;
         }
-
-        env->ReleaseByteArrayElements(jniIV, iv, 0);
-        cnt++;
       } catch (...) {
         continue;
       }
