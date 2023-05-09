@@ -33,10 +33,15 @@ namespace Jpp {
     jclass _Jclass;
     jobject _thiz;
 
+    Uri(JNIEnv *env) {
+      this->_env = env;
+    }
+
     Uri(JNIEnv *env, jobject uri) {
       this->_env = env;
       this->_thiz = uri;
-      _Jclass = env->FindClass("android/net/Uri");
+//      _Jclass = env->FindClass("android/net/Uri");
+      _Jclass = env->GetObjectClass(_thiz);
     }
   };
 
@@ -51,7 +56,8 @@ namespace Jpp {
     InputStream(JNIEnv *env, jobject input_stream) {
       this->_env = env;
       this->_thiz = input_stream;
-      _Jclass = env->FindClass("java/io/InputStream");
+//      _Jclass = env->FindClass("java/io/InputStream");
+      _Jclass = env->GetObjectClass(_thiz);
 
       _m_read = env->GetMethodID(_Jclass, "read", "([B)I");
 
@@ -79,7 +85,8 @@ namespace Jpp {
     OutputStream(JNIEnv *env, jobject output_stream) {
       this->_env = env;
       this->_thiz = output_stream;
-      _Jclass = env->FindClass("java/io/OutputStream");
+//      _Jclass = env->FindClass("java/io/OutputStream");
+      _Jclass = env->GetObjectClass(_thiz);
 
       _m_write = env->GetMethodID(_Jclass, "write", "([BII)V");
 
@@ -114,7 +121,8 @@ namespace Jpp {
     DocumentFile(JNIEnv *env, jobject document_file) {
       this->_env = env;
       this->_thiz = document_file;
-      _Jclass = env->FindClass("androidx/documentfile/provider/DocumentFile");
+//      _Jclass = env->FindClass("androidx/documentfile/provider/DocumentFile");
+      _Jclass = env->GetObjectClass(_thiz);
 
       _m_getUri = env->GetMethodID(
         _Jclass,
@@ -135,7 +143,7 @@ namespace Jpp {
       );
     }
 
-    static DocumentFile fromTreeUri(JNIEnv *static_env, Context const &context, Uri const &treeUri);
+    static DocumentFile fromTreeUri(JNIEnv *static_env, Context const &context, Uri const &treeUri, jclass DocumentFileClass);
 
     Uri getUri();
 
@@ -156,7 +164,9 @@ namespace Jpp {
     Activity(JNIEnv *env, jobject activity) {
       this->_env = env;
       this->_thiz = activity;
+//      _Jclass = env->GetObjectClass(_thiz);
       _Jclass = env->GetObjectClass(_thiz);
+
       _m_getApplicationContext = env->GetMethodID(
         _Jclass,
         "getApplicationContext",
@@ -177,7 +187,9 @@ namespace Jpp {
     Context(JNIEnv *env, jobject context) {
       this->_env = env;
       this->_thiz = context;
-      _Jclass = env->FindClass("android/content/Context");
+//      _Jclass = env->FindClass("android/content/Context");
+      _Jclass = env->GetObjectClass(_thiz);
+
       _m_getContentResolver = env->GetMethodID(
         _Jclass,
         "getContentResolver",
@@ -200,7 +212,9 @@ namespace Jpp {
     ContentResolver(JNIEnv *env, jobject content_resolver) {
       this->_env = env;
       this->_thiz = content_resolver;
-      _Jclass = env->FindClass("android/content/ContentResolver");
+//      _Jclass = env->FindClass("android/content/ContentResolver");
+      _Jclass = env->GetObjectClass(_thiz);
+
       _m_query = env->GetMethodID(
         _Jclass,
         "query",
@@ -250,7 +264,9 @@ namespace Jpp {
     Cursor(JNIEnv *env, jobject cursor) {
       this->_env = env;
       this->_thiz = cursor;
-      _Jclass = env->FindClass("android/database/Cursor");
+//      _Jclass = env->FindClass("android/database/Cursor");
+      _Jclass = env->GetObjectClass(_thiz);
+
       _closed = false;
 
       _m_moveToFirst = env->GetMethodID(
@@ -351,15 +367,17 @@ namespace Jpp {
     ));
   }
 
-  DocumentFile DocumentFile::fromTreeUri(JNIEnv *static_env, Context const &context, Uri const &treeUri) {
-    jclass Jclass = static_env->FindClass("androidx/documentfile/provider/DocumentFile");
+  DocumentFile DocumentFile::fromTreeUri(JNIEnv *static_env, Context const &context, Uri const &treeUri, jclass DocumentFileClass) {
+    jmethodID fromTreeUri_m = static_env->GetStaticMethodID(
+      DocumentFileClass,
+//      static_env->FindClass("androidx/documentfile/provider/DocumentFile"),
+      "fromTreeUri",
+      "(Landroid/content/Context;Landroid/net/Uri;)Landroidx/documentfile/provider/DocumentFile;"
+    );
+
     return DocumentFile(static_env, static_env->CallStaticObjectMethod(
-      Jclass,
-      static_env->GetStaticMethodID(
-        Jclass,
-        "fromTreeUri",
-        "(Landroid/content/Context;Landroid/net/Uri;)Landroidx/documentfile/provider/DocumentFile;"
-      ),
+      DocumentFileClass,
+      fromTreeUri_m,
       context._thiz,
       treeUri._thiz
     ));
@@ -389,8 +407,9 @@ namespace Jpp {
 
     ArrayList(JNIEnv *env, jobject array_list) {
       this->_env = env;
-      this->_Jclass = env->FindClass("java/util/ArrayList");
-      _thiz = array_list;
+//      this->_Jclass = env->FindClass("java/util/ArrayList");
+      _thiz = _env->NewGlobalRef(array_list);
+      _Jclass = env->GetObjectClass(_thiz);
 
       _m_size = env->GetMethodID(_Jclass, "size", "()I");
       _m_get = env->GetMethodID(_Jclass, "get", "(I)Ljava/lang/Object;");
@@ -398,6 +417,11 @@ namespace Jpp {
       _m_isEmpty = env->GetMethodID(_Jclass, "isEmpty", "()Z");
     }
 
+    ~ArrayList() {
+      _env->DeleteGlobalRef(_thiz);
+    }
+
+    // self thread method
     jint size() {
       return _env->CallIntMethod(_thiz, _m_size);
     }
@@ -412,6 +436,24 @@ namespace Jpp {
 
     jboolean isEmpty() {
       return _env->CallBooleanMethod(_thiz, _m_isEmpty);
+    }
+
+    // use this methods if the array list is accessed in other threads
+
+    jint size(JNIEnv *env) {
+      return env->CallIntMethod(_thiz, _m_size);
+    }
+
+    T get(JNIEnv *env, jint index) {
+      return T(env, env->CallObjectMethod(_thiz, _m_get, index));
+    }
+
+    T remove(JNIEnv *env, jint index) {
+      return T(env, env->CallObjectMethod(_thiz, _m_remove, index));
+    }
+
+    jboolean isEmpty(JNIEnv* env) {
+      return env->CallBooleanMethod(_thiz, _m_isEmpty);
     }
   };
 }

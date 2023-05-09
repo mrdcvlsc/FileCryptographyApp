@@ -8,6 +8,7 @@
 #include <random>
 #include <chrono>
 #include <limits>
+#include <android/log.h>
 #include "Krypt/src/Krypt.hpp"
 #include "jpp.hpp"
 
@@ -193,7 +194,14 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
     return 0xffffffff; // invalid buffer size
   }
 
+  JavaVM* javaVM;
+  env->GetJavaVM((_JavaVM**) &javaVM);
+  jclass DocumentFileClass = env->FindClass("androidx/documentfile/provider/DocumentFile");
+
   auto encrypt_lambda = [&] () -> void {
+    JNIEnv* threadEnv;
+    javaVM->AttachCurrentThread((_JNIEnv**) &threadEnv, NULL);
+
     bool run_thread = true;
 
     Bytes *encryptedBuffer = new Bytes[BUFFER_SIZE];
@@ -201,17 +209,18 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
     while (run_thread) {
       try {
         std::string target_file;
-        Uri target_uri(env, NULL);
+        Uri target_uri(threadEnv);
 
         vector_mtx.lock();
-        run_thread = !file_queue.isEmpty();
+        run_thread = !file_queue.isEmpty(threadEnv);
 
         if (run_thread) {
           target_uri._thiz = file_queue.remove(file_queue.size() - 1)._thiz;
-          jstring filename = getFileName(env, thiz, target_uri._thiz);
-          const char *c_filename_buffer = env->GetStringUTFChars(filename, NULL);
+          target_uri._Jclass = threadEnv->GetObjectClass(target_uri._thiz);
+          jstring filename = getFileName(threadEnv, thiz, target_uri._thiz);
+          const char *c_filename_buffer = threadEnv->GetStringUTFChars(filename, NULL);
           target_file = std::string(c_filename_buffer);
-          env->ReleaseStringUTFChars(filename, c_filename_buffer);
+          threadEnv->ReleaseStringUTFChars(filename, c_filename_buffer);
         } else {
           vector_mtx.unlock();
           break;
@@ -220,31 +229,31 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
         vector_mtx.unlock();
 
         InputStream incoming_bytes = InputStream(
-          env,
-          openFileUriInputStream(env, thiz, target_uri._thiz)
+          threadEnv,
+          openFileUriInputStream(threadEnv, thiz, target_uri._thiz)
         );
 
         std::string outfname(target_file + ".bthl");
-        jstring jniOutputFileName = env->NewStringUTF(outfname.c_str());
+        jstring jniOutputFileName = threadEnv->NewStringUTF(outfname.c_str());
 
-        jstring mimeType = env->NewStringUTF("application/octet-stream");
+        jstring mimeType = threadEnv->NewStringUTF("application/octet-stream");
         DocumentFile folder = DocumentFile::fromTreeUri(
-          env,
-          Activity(env, thiz).getApplicationContext(),
-          Uri(env, output_path)
+          threadEnv,
+          Activity(threadEnv, thiz).getApplicationContext(),
+          Uri(threadEnv, output_path), DocumentFileClass
         );
 
         DocumentFile outputFile = folder.createFile(mimeType, jniOutputFileName);
 
-        OutputStream outgoing_bytes = Activity(env, thiz).getApplicationContext().getContentResolver().openOutputStream(outputFile.getUri());
+        OutputStream outgoing_bytes = Activity(threadEnv, thiz).getApplicationContext().getContentResolver().openOutputStream(outputFile.getUri());
 
-        jbyteArray fileSignature = env->NewByteArray(FILE_SIGNATURE_SIZE);
+        jbyteArray fileSignature = threadEnv->NewByteArray(FILE_SIGNATURE_SIZE);
         const jbyte fileSig[FILE_SIGNATURE_SIZE] = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
-        env->SetByteArrayRegion(fileSignature, 0, FILE_SIGNATURE_SIZE, fileSig);
+        threadEnv->SetByteArrayRegion(fileSignature, 0, FILE_SIGNATURE_SIZE, fileSig);
         outgoing_bytes.write(fileSignature, 0, FILE_SIGNATURE_SIZE);
 
         jint length;
-        jbyteArray jniBuffer = env->NewByteArray(BUFFER_SIZE);
+        jbyteArray jniBuffer = threadEnv->NewByteArray(BUFFER_SIZE);
 
         // generate random IV
         unsigned char iv[AES_BLOCK_SIZE];
@@ -260,12 +269,12 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
           iv[i] = random_number(rand_engine);
         }
 
-        jbyteArray jniIV = env->NewByteArray(AES_BLOCK_SIZE);
-        env->SetByteArrayRegion(jniIV, 0, AES_BLOCK_SIZE, reinterpret_cast<jbyte *>(iv));
+        jbyteArray jniIV = threadEnv->NewByteArray(AES_BLOCK_SIZE);
+        threadEnv->SetByteArrayRegion(jniIV, 0, AES_BLOCK_SIZE, reinterpret_cast<jbyte *>(iv));
         outgoing_bytes.write(jniIV, 0, AES_BLOCK_SIZE);
 
         while ((length = incoming_bytes.read(jniBuffer)) > 0) {
-          jbyte *buffer = (jbyte *) env->GetPrimitiveArrayCritical(jniBuffer, NULL);
+          jbyte *buffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(jniBuffer, NULL);
 
           if (length == BUFFER_SIZE) {
             for (size_t index = 0; index < length; index += AES_BLOCK_SIZE) {
@@ -276,8 +285,8 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
               );
             }
 
-            env->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
-            env->SetByteArrayRegion(
+            threadEnv->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
+            threadEnv->SetByteArrayRegion(
               jniBuffer, 0, length,
               reinterpret_cast<jbyte *>(encryptedBuffer));
             outgoing_bytes.write(jniBuffer, 0, length);
@@ -293,8 +302,8 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
               );
             }
 
-            env->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
-            env->SetByteArrayRegion(
+            threadEnv->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
+            threadEnv->SetByteArrayRegion(
               jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK_SIZE,
               reinterpret_cast<jbyte *>(encryptedBuffer));
             outgoing_bytes.write(jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK_SIZE);
@@ -304,15 +313,15 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
               AES_BLOCK_SIZE, reinterpret_cast<unsigned char *>(iv)
             );
 
-            env->SetByteArrayRegion(
+            threadEnv->SetByteArrayRegion(
               jniBuffer, 0, recover.length,
               reinterpret_cast<jbyte *>(recover.array));
             outgoing_bytes.write(jniBuffer, 0, recover.length);
           }
         }
 
-        if (env->ExceptionCheck()) {
-          env->ExceptionDescribe();
+        if (threadEnv->ExceptionCheck()) {
+          threadEnv->ExceptionDescribe();
           outgoing_bytes.close();
           outputFile.Delete();
         } else {
@@ -324,13 +333,32 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
     }
 
     delete[] encryptedBuffer;
+
+    javaVM->DetachCurrentThread();
   };
 
-  // TODO: implement multi-threading
-  encrypt_lambda();
+  int physical_threads = std::thread::hardware_concurrency();
+
+  std::vector<std::thread> threads;
+
+  for (size_t i = 0; i < physical_threads - 2; ++i) {
+    vector_mtx.lock();
+    threads.push_back(std::thread(encrypt_lambda));
+    vector_mtx.unlock();
+  }
+
+//  encrypt_lambda();
+
+  for (size_t i = 0; i < physical_threads - 2; ++i) {
+    threads[i].join();
+  }
 
   return cnt.load(std::memory_order_relaxed);
 }
+
+
+
+
 
 extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_decryptFiles (
   JNIEnv *env, jobject thiz,
@@ -355,7 +383,17 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
     return 0xffffffff; // invalid buffer size
   }
 
+  JavaVM* javaVM;
+  env->GetJavaVM((_JavaVM**) &javaVM);
+  jobject DocumentFileClass = env->NewGlobalRef((jobject) env->FindClass("androidx/documentfile/provider/DocumentFile"));
+  jobject globalThis = env->NewGlobalRef(thiz);
+  jobject globalOutputPath = env->NewGlobalRef(output_path);
+
   auto decrypt_lambda = [&] () -> void {
+    __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "start");
+    JNIEnv* threadEnv;
+    javaVM->AttachCurrentThread((_JNIEnv**) &threadEnv, NULL);
+
     bool run_thread = true;
 
     Bytes *decryptedBuffer = new Bytes[BUFFER_SIZE];
@@ -363,17 +401,21 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
     while (run_thread) {
       try {
         std::string target_file;
-        Uri target_uri(env, NULL);
+        Uri target_uri(threadEnv);
 
         vector_mtx.lock();
-        run_thread = !file_queue.isEmpty();
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "queue check start");
+        run_thread = !file_queue.isEmpty(threadEnv);
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "queue check end");
+
 
         if (run_thread) {
-          target_uri._thiz = file_queue.remove(file_queue.size() - 1)._thiz;
-          jstring filename = getFileName(env, thiz, target_uri._thiz);
-          const char *c_filename_buffer = env->GetStringUTFChars(filename, NULL);
+          target_uri._thiz = file_queue.remove(threadEnv, file_queue.size(threadEnv) - 1)._thiz;
+          target_uri._Jclass = threadEnv->GetObjectClass(target_uri._thiz);
+          jstring filename = getFileName(threadEnv, globalThis, target_uri._thiz);
+          const char *c_filename_buffer = threadEnv->GetStringUTFChars(filename, NULL);
           target_file = std::string(c_filename_buffer);
-          env->ReleaseStringUTFChars(filename, c_filename_buffer);
+          threadEnv->ReleaseStringUTFChars(filename, c_filename_buffer);
         } else {
           vector_mtx.unlock();
           break;
@@ -381,10 +423,13 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 
         vector_mtx.unlock();
 
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "InputStream start");
         InputStream incoming_bytes = InputStream(
-          env,
-          openFileUriInputStream(env, thiz, target_uri._thiz)
+          threadEnv,
+          openFileUriInputStream(threadEnv, globalThis, target_uri._thiz)
         );
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "InputStream end");
+
 
         std::string outfname(target_file);
         std::string fileExtension = "";
@@ -395,41 +440,59 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 
         outfname = outfname.substr(0, outfname.size() - FILE_EXTENSION_SIZE);
 
-        jstring jniOutputFileName = env->NewStringUTF(outfname.c_str());
+        jstring jniOutputFileName = threadEnv->NewStringUTF(outfname.c_str());
 
-        jstring mimeType = env->NewStringUTF("application/octet-stream");
+        jstring mimeType = threadEnv->NewStringUTF("application/octet-stream");
+
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "Uri treeUri start");
+        Uri treeUri(threadEnv, globalOutputPath);
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "Uri treeUri end");
+
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "Context folder_ctx start");
+        Context folder_ctx = Activity(threadEnv, globalThis).getApplicationContext();
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "Context folder_ctx end");
+
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "DocumentFile folder start");
         DocumentFile folder = DocumentFile::fromTreeUri(
-          env,
-          Activity(env, thiz).getApplicationContext(),
-          Uri(env, output_path)
+          threadEnv,
+          folder_ctx,
+          treeUri,
+          (jclass) DocumentFileClass
         );
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "DocumentFile folder end");
 
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "DocumentFile outputFile start");
         DocumentFile outputFile = folder.createFile(mimeType, jniOutputFileName);
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "DocumentFile outputFile end");
 
-        OutputStream outgoing_bytes = Activity(env, thiz).getApplicationContext().getContentResolver().openOutputStream(outputFile.getUri());
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "OutputStream outgoing_bytes start");
+        OutputStream outgoing_bytes = Activity(threadEnv, globalThis).getApplicationContext().getContentResolver().openOutputStream(outputFile.getUri());
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "OutputStream outgoing_bytes start");
 
-        jbyteArray fileSignature = env->NewByteArray(FILE_SIGNATURE_SIZE);
+
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "Check Block Start");
+        jbyteArray fileSignature = threadEnv->NewByteArray(FILE_SIGNATURE_SIZE);
         incoming_bytes.read(fileSignature);
 
         const jbyte fileSig[FILE_SIGNATURE_SIZE] = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
-        jbyte *fileSigRead = env->GetByteArrayElements(fileSignature, NULL);
+        jbyte *fileSigRead = threadEnv->GetByteArrayElements(fileSignature, NULL);
 
         jint length;
-        jbyteArray jniBuffer = env->NewByteArray(BUFFER_SIZE);
-        jbyteArray jniIV = env->NewByteArray(AES_BLOCK_SIZE);
+        jbyteArray jniBuffer = threadEnv->NewByteArray(BUFFER_SIZE);
+        jbyteArray jniIV = threadEnv->NewByteArray(AES_BLOCK_SIZE);
         incoming_bytes.read(jniIV);
-        jbyte *iv = env->GetByteArrayElements(jniIV, NULL);
+        jbyte *iv = threadEnv->GetByteArrayElements(jniIV, NULL);
 
         std::string properFileExtension = ".bthl";
 
         jboolean signFailed = std::memcmp(fileSigRead, fileSig, FILE_SIGNATURE_SIZE);
         jboolean wrongFileExtension = fileExtension != properFileExtension;
-        jboolean JNIException = env->ExceptionCheck();
+        jboolean JNIException = threadEnv->ExceptionCheck();
 
-        env->ReleaseByteArrayElements(fileSignature, fileSigRead, 0);
+        threadEnv->ReleaseByteArrayElements(fileSignature, fileSigRead, 0);
 
         if (JNIException) {
-          env->ExceptionDescribe();
+          threadEnv->ExceptionDescribe();
         }
 
         if (signFailed || wrongFileExtension || JNIException) {
@@ -437,9 +500,11 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
           outputFile.Delete();
           continue;
         }
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "Check Block End");
 
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "Decryption Block Start");
         while ((length = incoming_bytes.read(jniBuffer)) > 0) {
-          jbyte *buffer = (jbyte *) env->GetPrimitiveArrayCritical(jniBuffer, NULL);
+          jbyte *buffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(jniBuffer, NULL);
 
           if (length == BUFFER_SIZE) {
             for (size_t index = 0; index < length; index += AES_BLOCK_SIZE) {
@@ -450,8 +515,8 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
               );
             }
 
-            env->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
-            env->SetByteArrayRegion(
+            threadEnv->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
+            threadEnv->SetByteArrayRegion(
               jniBuffer, 0, length,
               reinterpret_cast<jbyte *>(decryptedBuffer));
             outgoing_bytes.write(jniBuffer, 0, length);
@@ -467,8 +532,8 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
               );
             }
 
-            env->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
-            env->SetByteArrayRegion(
+            threadEnv->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
+            threadEnv->SetByteArrayRegion(
               jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK_SIZE,
               reinterpret_cast<jbyte *>(decryptedBuffer));
             outgoing_bytes.write(jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK_SIZE);
@@ -478,17 +543,18 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
               AES_BLOCK_SIZE, reinterpret_cast<unsigned char *>(iv)
             );
 
-            env->SetByteArrayRegion(
+            threadEnv->SetByteArrayRegion(
               jniBuffer, 0, recover.length,
               reinterpret_cast<jbyte *>(recover.array));
             outgoing_bytes.write(jniBuffer, 0, recover.length);
           }
         }
+        __android_log_write(ANDROID_LOG_DEBUG, "Native-Thread", "Decryption Block End");
 
-        env->ReleaseByteArrayElements(jniIV, iv, 0);
+        threadEnv->ReleaseByteArrayElements(jniIV, iv, 0);
 
-        if (env->ExceptionCheck()) {
-          env->ExceptionDescribe();
+        if (threadEnv->ExceptionCheck()) {
+          threadEnv->ExceptionDescribe();
           outgoing_bytes.close();
           outputFile.Delete();
         } else {
@@ -500,10 +566,29 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
     }
 
     delete[] decryptedBuffer;
+
+    javaVM->DetachCurrentThread();
   };
 
-  // TODO: implement multi-threading
-  decrypt_lambda();
+  int physical_threads = std::thread::hardware_concurrency();
+
+  std::vector<std::thread> threads;
+
+  for (size_t i = 0; i < physical_threads - 2; ++i) {
+    vector_mtx.lock();
+    threads.push_back(std::thread(decrypt_lambda));
+    vector_mtx.unlock();
+  }
+
+//  decrypt_lambda();
+
+  for (size_t i = 0; i < physical_threads - 2; ++i) {
+    threads[i].join();
+  }
+
+  env->DeleteGlobalRef(DocumentFileClass);
+  env->DeleteGlobalRef(globalThis);
+  env->DeleteGlobalRef(globalOutputPath);
 
   return cnt.load(std::memory_order_relaxed);
 }
