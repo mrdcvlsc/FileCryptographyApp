@@ -15,8 +15,11 @@
 using namespace Krypt;
 using namespace Jpp;
 
-constexpr static jsize MB = 16;
-constexpr static jsize BUFFER_SIZE = MB * 1024 * 1024;
+//constexpr static jsize MB = 32;
+//constexpr static jsize BUFFER_SIZE = MB * 1024 * 1024;
+
+/// debug buffer size.
+constexpr static jsize BUFFER_SIZE = 32;
 
 /// 5 characters.
 constexpr static size_t FILE_EXTENSION_SIZE = 5;

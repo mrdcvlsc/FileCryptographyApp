@@ -19,6 +19,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 
@@ -37,6 +39,8 @@ public class BethelaActivity extends AppCompatActivity {
     private TextView tvSaveFolder;
     private String password;
 
+    private boolean keyFileMode;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
 
@@ -51,30 +55,29 @@ public class BethelaActivity extends AppCompatActivity {
         tvPassword.setVisibility(View.INVISIBLE);
 
         urisFiles = new ArrayList<>();
+
+        keyFileMode = true;
     }
 
-    public static String getFileName (Context context, Uri uriFile) {
-        Cursor c = context.getContentResolver().query(uriFile, null, null, null, null);
-        c.moveToFirst();
-        String keyFileName = c.getString(c.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME));
-        c.close();
-        return keyFileName;
-    }
+    // ##################################################################################
+    // password selection section
+    // ##################################################################################
 
     public void btnSelectPasswordAsKey (View v) {
+        keyFileMode = false;
         tvKeyFile.setVisibility(View.INVISIBLE);
         tvPassword.setVisibility(View.VISIBLE);
-
-        password = tvPassword.getText().toString();
-
-        // TODO: run a hash function
     }
 
-    public void btnGenerateFileKey (View v) {
-        // TODO: btnGenerateFileKey
+    private byte[] generateKeyPassword () {
+        // TODO: generate an encryption/decryption key from a given password (key derivation)
+        return null;
     }
 
-    // key selection
+    // ##################################################################################
+    // key selection section
+    // ##################################################################################
+
     private final ActivityResultLauncher<Intent> keyPicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(),
         new ActivityResultCallback<ActivityResult>() {
@@ -92,6 +95,7 @@ public class BethelaActivity extends AppCompatActivity {
     );
 
     public void btnSelectFileAsKey (View v) {
+        keyFileMode = true;
         tvKeyFile.setVisibility(View.VISIBLE);
         tvPassword.setVisibility(View.INVISIBLE);
 
@@ -101,7 +105,9 @@ public class BethelaActivity extends AppCompatActivity {
         keyPicker.launch(data);
     }
 
-    // files selection
+    // ##################################################################################
+    // files selection section
+    // ##################################################################################
 
     private final ActivityResultLauncher<Intent> filePicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(),
@@ -142,6 +148,10 @@ public class BethelaActivity extends AppCompatActivity {
         filePicker.launch(data);
     }
 
+    // ##################################################################################
+    // folder selection section
+    // ##################################################################################
+
     private final ActivityResultLauncher<Intent> folderPicker = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(),
         result -> {
@@ -158,6 +168,10 @@ public class BethelaActivity extends AppCompatActivity {
         folderPicker.launch(intent);
     }
 
+    // ##################################################################################
+    // clear buttons section
+    // ##################################################################################
+
     public void btnClearFiles (View v) {
         urisFiles.clear();
         tvFiles.setText("Target Files: empty");
@@ -165,26 +179,21 @@ public class BethelaActivity extends AppCompatActivity {
 
     public void btnClearKeys (View v) {
         uriKeyFile = null;
+        password = null;
         tvKeyFile.setText("Key File: empty");
+        tvPassword.setText("");
     }
 
-    public boolean ready() {
-        if (uriKeyFile == null) {
-            Toast.makeText(this, "Select first a key file", Toast.LENGTH_SHORT).show();
-            return false;
-        }
+    // ##################################################################################
+    // get methods section
+    // ##################################################################################
 
-        if (urisFiles.isEmpty()) {
-            Toast.makeText(this, "Select first some target files", Toast.LENGTH_SHORT).show();
-            return false;
-        }
-
-        if (uriOutputFolder == null) {
-            Toast.makeText(this, "Select first a save path", Toast.LENGTH_SHORT).show();
-            return false;
-        }
-
-        return true;
+    private static String getFileName (Context context, Uri uriFile) {
+        Cursor c = context.getContentResolver().query(uriFile, null, null, null, null);
+        c.moveToFirst();
+        String keyFileName = c.getString(c.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME));
+        c.close();
+        return keyFileName;
     }
 
     private byte[] getKeyFile(Uri keyFile) {
@@ -224,9 +233,82 @@ public class BethelaActivity extends AppCompatActivity {
         }
     }
 
+    // ##################################################################################
+    // cryptography section
+    // ##################################################################################
+
+    /// produces a 256-bit or 32 byte hash array.
+    private byte[] sha256(String text, int level) {
+        if (level <= 0) {
+            return text.getBytes(StandardCharsets.UTF_8);
+        }
+
+        try {
+            MessageDigest SHA = MessageDigest.getInstance("SHA-256");
+            byte[] hash = SHA.digest(text.getBytes(StandardCharsets.UTF_8));
+
+            for (int i = 1; i < level; ++i) {
+                hash = SHA.digest(hash);
+            }
+
+            return hash;
+        } catch (Exception err) {
+            System.out.println(err);
+            return null;
+        }
+    }
+
+    public void btnGenerateFileKey (View v) {
+        // TODO: btnGenerateFileKey
+    }
+
+    public boolean ready() {
+        if (!keyFileMode) {
+            password = tvPassword.getText().toString();
+        }
+
+        if (keyFileMode && uriKeyFile == null) {
+            Toast.makeText(this, "Select a key file", Toast.LENGTH_SHORT).show();
+            return false;
+        } else if (!keyFileMode && password == null) {
+            Toast.makeText(this, "Input a password", Toast.LENGTH_SHORT).show();
+            return false;
+        } else if (!keyFileMode && password.length() < 8) {
+            Toast.makeText(this, "Password length should be 8 or greater", Toast.LENGTH_SHORT).show();
+            return false;
+        }
+
+        if (urisFiles.isEmpty()) {
+            Toast.makeText(this, "Select target files", Toast.LENGTH_SHORT).show();
+            return false;
+        }
+
+        if (uriOutputFolder == null) {
+            Toast.makeText(this, "Select a save location", Toast.LENGTH_SHORT).show();
+            return false;
+        }
+
+        return true;
+    }
+
     public void btnEncryptFiles (View v) {
         if (ready()) {
-            byte[] key = getKeyFile(uriKeyFile);
+            byte[] key;
+
+            if (keyFileMode) {
+                key = getKeyFile(uriKeyFile);;
+            } else {
+                key = sha256(tvPassword.getText().toString(), 5000);
+            }
+
+            if (key == null) {
+                if (keyFileMode) {
+                    Toast.makeText(this, "KeyFile error", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, "KeyPassword error", Toast.LENGTH_SHORT).show();
+                }
+                return;
+            }
 
             try {
                 int res = encryptFiles(key, urisFiles, uriOutputFolder);
@@ -240,14 +322,29 @@ public class BethelaActivity extends AppCompatActivity {
                     Toast.makeText(this, "All files(" + res + ") encrypted", Toast.LENGTH_SHORT).show();
                 }
             } catch (Exception err) {
-                Log.d("operation error: ", err.getMessage());
+                Toast.makeText(this, "Encryption error occur", Toast.LENGTH_SHORT).show();
             }
         }
     }
 
     public void btnDecryptFiles (View v) {
         if (ready()) {
-            byte[] key = getKeyFile(uriKeyFile);
+            byte[] key;
+
+            if (keyFileMode) {
+                key = getKeyFile(uriKeyFile);;
+            } else {
+                key = sha256(tvPassword.getText().toString(), 5000);
+            }
+
+            if (key == null) {
+                if (keyFileMode) {
+                    Toast.makeText(this, "KeyFile error", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, "KeyPassword error", Toast.LENGTH_SHORT).show();
+                }
+                return;
+            }
 
             try {
                 int res = decryptFiles(key, urisFiles, uriOutputFolder);
@@ -261,13 +358,14 @@ public class BethelaActivity extends AppCompatActivity {
                     Toast.makeText(this, "All files(" + res + ") decrypted", Toast.LENGTH_SHORT).show();
                 }
             } catch (Exception err) {
-                Log.d("operation error: ", err.getMessage());
+                Toast.makeText(this, "Decryption error occur", Toast.LENGTH_SHORT).show();
             }
         }
     }
 
-    // #####################################################################
-    //                     NATIVE METHODS
+    // ##################################################################################
+    // native methods
+    // ##################################################################################
 
     private native int encryptFiles(byte[] keyFile, ArrayList<Uri> targetFiles, Uri outputPath);
     private native int decryptFiles(byte[] keyFile, ArrayList<Uri> targetFiles, Uri outputPath);
