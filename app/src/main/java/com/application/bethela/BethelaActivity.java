@@ -5,6 +5,7 @@ import androidx.activity.result.ActivityResultCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.documentfile.provider.DocumentFile;
 
 import android.app.Activity;
 import android.content.Context;
@@ -19,10 +20,13 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Random;
 
 public class BethelaActivity extends AppCompatActivity {
 
@@ -258,8 +262,63 @@ public class BethelaActivity extends AppCompatActivity {
         }
     }
 
+    private String randomAlphanumericString(int length) {
+        int leftLimit = 48;
+        int rightLimit = 122;
+        Random random = new Random();
+
+        return random.ints(leftLimit, rightLimit + 1)
+            .filter(i -> (i <= 57 || i >= 65) && (i <= 90 || i >= 97))
+            .limit(length)
+            .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+            .toString();
+    }
+
     public void btnGenerateFileKey (View v) {
-        // TODO: btnGenerateFileKey
+        if (uriOutputFolder == null) {
+            Toast.makeText(this, "Select a save location", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        int keySize = 32; // AES-256
+        byte[] secureRandomBytes = new byte[keySize];
+
+        try {
+            SecureRandom.getInstanceStrong().nextBytes(secureRandomBytes);
+        } catch (Exception err) {
+            SecureRandom random = new SecureRandom();
+            random.nextBytes(secureRandomBytes);
+        }
+
+        DocumentFile folder = DocumentFile.fromTreeUri(this, uriOutputFolder);
+        DocumentFile outputKeyFile = folder.createFile(
+            "application/octet-stream",
+            randomAlphanumericString(9)
+        );
+
+        try {
+            OutputStream outgoingBytes = getContentResolver().openOutputStream(outputKeyFile.getUri());
+
+            byte[] fileSig = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
+            byte[] keySizeBuffer = new byte[Integer.BYTES];
+
+            int fileKeySize = fileSig.length + secureRandomBytes.length;
+
+            for (int i = 0; i < keySizeBuffer.length; ++i) {
+                keySizeBuffer[i] = (byte) fileKeySize;
+                fileKeySize >>= Byte.SIZE;
+            }
+
+            outgoingBytes.write(keySizeBuffer, 0, keySizeBuffer.length);
+            outgoingBytes.write(fileSig, 0, fileSig.length);
+            outgoingBytes.write(secureRandomBytes, 0, secureRandomBytes.length);
+            outgoingBytes.close();
+        } catch (Exception err) {
+            Toast.makeText(this, "Error writing to the save location", Toast.LENGTH_SHORT).show();
+            outputKeyFile.delete();
+        }
+
+        Toast.makeText(this, "Key file saved to selected location", Toast.LENGTH_SHORT).show();
     }
 
     public boolean ready() {
