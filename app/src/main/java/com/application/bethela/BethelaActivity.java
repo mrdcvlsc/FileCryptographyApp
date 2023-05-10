@@ -22,11 +22,13 @@ import android.widget.Toast;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Random;
+import java.util.zip.DataFormatException;
 
 public class BethelaActivity extends AppCompatActivity {
 
@@ -201,6 +203,8 @@ public class BethelaActivity extends AppCompatActivity {
     }
 
     private byte[] getKeyFile(Uri keyFile) {
+        final int AES256_KEYSIZE = 32;
+
         try {
             InputStream keyInputStream = getApplicationContext().getContentResolver().openInputStream(keyFile);
 
@@ -210,16 +214,35 @@ public class BethelaActivity extends AppCompatActivity {
                 keySizeBuffer[i] = 0;
             }
 
-            keyInputStream.read(keySizeBuffer);
             int keySize = 0;
-            for (int i = 0; i < keySizeBuffer.length; ++i) {
-                keySize <<= Byte.SIZE;
-                keySize |= keySizeBuffer[keySizeBuffer.length - 1 - i];
+            int readLength = keyInputStream.read(keySizeBuffer);
+
+            if (readLength == Integer.BYTES) {
+                for (int i = 0; i < keySizeBuffer.length; ++i) {
+                    keySize <<= Byte.SIZE;
+                    keySize |= keySizeBuffer[keySizeBuffer.length - 1 - i];
+                }
+            } else {
+                keyInputStream.close();
+                throw new DataFormatException("Not a bethela file key");
             }
 
             byte[] fileSig = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
             byte[] readFileSig = new byte[fileSig.length];
-            keyInputStream.read(readFileSig);
+
+            readLength = keyInputStream.read(readFileSig);
+
+            if (readLength == fileSig.length) {
+                for (int i = 0; i < readLength; ++i) {
+                    if (fileSig[i] != readFileSig[i]) {
+                        keyInputStream.close();
+                        throw new DataFormatException("Not a bethela file key");
+                    }
+                }
+            } else {
+                keyInputStream.close();
+                throw new DataFormatException("Not a bethela file key");
+            }
 
             keySize -= readFileSig.length;
 
@@ -228,11 +251,40 @@ public class BethelaActivity extends AppCompatActivity {
             Log.d("getKeyFile: keySize", "" + keySize);
 
             byte[] key = new byte[keySize];
-            keyInputStream.read(key);
+            readLength = keyInputStream.read(key);
+            if (readLength != AES256_KEYSIZE) { // Invalid AES-256 key
+                keyInputStream.close();
+                throw new InvalidKeyException("Not a bethela file key");
+            }
 
+            Toast.makeText(this, "KeyType: BETHELA", Toast.LENGTH_SHORT).show();
             return key;
+        } catch (DataFormatException err) {
+            try {
+                InputStream keyInputStream = getApplicationContext().getContentResolver().openInputStream(keyFile);
+                byte[] fileFirst32Bytes = new byte[AES256_KEYSIZE]; // AES-256 key
+
+                for (int i = 0; i < AES256_KEYSIZE; ++i) {
+                    fileFirst32Bytes[i] = 0;
+                }
+
+                int readLength = keyInputStream.read(fileFirst32Bytes);
+
+                if (readLength == AES256_KEYSIZE) {
+                    Toast.makeText(this, "KeyType: FILE - COMPLETE BYTES", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, "KeyType: FILE - INCOMPLETE BYTES", Toast.LENGTH_SHORT).show();
+                }
+                return fileFirst32Bytes;
+            } catch (Exception e) {
+                Toast.makeText(this, "KeyType: FILE KEY ERROR", Toast.LENGTH_SHORT).show();
+            }
+            return null;
+        } catch (InvalidKeyException err) {
+            Toast.makeText(this, "KeyType: INVALID AES-256", Toast.LENGTH_SHORT).show();
+            return null;
         } catch (Exception err) {
-            Log.d("getKeyFile: Error", err.getMessage());
+            Toast.makeText(this, "KeyType: ERROR", Toast.LENGTH_SHORT).show();
             return null;
         }
     }
@@ -362,9 +414,9 @@ public class BethelaActivity extends AppCompatActivity {
 
             if (key == null) {
                 if (keyFileMode) {
-                    Toast.makeText(this, "KeyFile error", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Encryption: KeyFile error", Toast.LENGTH_SHORT).show();
                 } else {
-                    Toast.makeText(this, "KeyPassword error", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Encryption: KeyPassword error", Toast.LENGTH_SHORT).show();
                 }
                 return;
             }
@@ -398,9 +450,9 @@ public class BethelaActivity extends AppCompatActivity {
 
             if (key == null) {
                 if (keyFileMode) {
-                    Toast.makeText(this, "KeyFile error", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Decryption: KeyFile error", Toast.LENGTH_SHORT).show();
                 } else {
-                    Toast.makeText(this, "KeyPassword error", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Decryption: KeyPassword error", Toast.LENGTH_SHORT).show();
                 }
                 return;
             }
