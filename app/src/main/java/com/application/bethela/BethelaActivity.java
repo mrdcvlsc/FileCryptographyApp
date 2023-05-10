@@ -36,6 +36,10 @@ public class BethelaActivity extends AppCompatActivity {
         System.loadLibrary("bethela");
     }
 
+    final int AES256_KEYSIZE = 32;
+
+    // TODO: Isolate isolatable methods and function into class.java files
+
     private Uri uriOutputFolder;
     private Uri uriKeyFile;
     private ArrayList<Uri> urisFiles;
@@ -46,6 +50,8 @@ public class BethelaActivity extends AppCompatActivity {
     private String password;
 
     private boolean keyFileMode;
+
+    private byte[] AES256_KEY;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,11 +81,6 @@ public class BethelaActivity extends AppCompatActivity {
         tvPassword.setVisibility(View.VISIBLE);
     }
 
-    private byte[] generateKeyPassword () {
-        // TODO: generate an encryption/decryption key from a given password (key derivation)
-        return null;
-    }
-
     // ##################################################################################
     // key selection section
     // ##################################################################################
@@ -93,6 +94,8 @@ public class BethelaActivity extends AppCompatActivity {
                     Intent data = result.getData();
                     uriKeyFile = data.getData();
                     tvKeyFile.setText(getFileName(getApplicationContext(), uriKeyFile));
+
+                    AES256_KEY = getKeyFile(uriKeyFile);
                 } catch (Exception err) {
                     Log.d("keyPicker-error:", err.getMessage());
                 }
@@ -186,6 +189,7 @@ public class BethelaActivity extends AppCompatActivity {
     public void btnClearKeys (View v) {
         uriKeyFile = null;
         password = null;
+        AES256_KEY = null;
         tvKeyFile.setText("Key File: empty");
         tvPassword.setText("");
     }
@@ -203,8 +207,6 @@ public class BethelaActivity extends AppCompatActivity {
     }
 
     private byte[] getKeyFile(Uri keyFile) {
-        final int AES256_KEYSIZE = 32;
-
         try {
             InputStream keyInputStream = getApplicationContext().getContentResolver().openInputStream(keyFile);
 
@@ -278,13 +280,13 @@ public class BethelaActivity extends AppCompatActivity {
                 return fileFirst32Bytes;
             } catch (Exception e) {
                 Toast.makeText(this, "KeyType: FILE KEY ERROR", Toast.LENGTH_SHORT).show();
+                return null;
             }
-            return null;
         } catch (InvalidKeyException err) {
-            Toast.makeText(this, "KeyType: INVALID AES-256", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "KeyType: INVALID AES-256 KEY", Toast.LENGTH_SHORT).show();
             return null;
         } catch (Exception err) {
-            Toast.makeText(this, "KeyType: ERROR", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "KeyType: ERROR OCCURRED", Toast.LENGTH_SHORT).show();
             return null;
         }
     }
@@ -332,8 +334,7 @@ public class BethelaActivity extends AppCompatActivity {
             return;
         }
 
-        int keySize = 32; // AES-256
-        byte[] secureRandomBytes = new byte[keySize];
+        byte[] secureRandomBytes = new byte[AES256_KEYSIZE];
 
         try {
             SecureRandom.getInstanceStrong().nextBytes(secureRandomBytes);
@@ -342,10 +343,11 @@ public class BethelaActivity extends AppCompatActivity {
             random.nextBytes(secureRandomBytes);
         }
 
+        String newKeyFileName = randomAlphanumericString(8);
         DocumentFile folder = DocumentFile.fromTreeUri(this, uriOutputFolder);
         DocumentFile outputKeyFile = folder.createFile(
             "application/octet-stream",
-            randomAlphanumericString(9)
+            newKeyFileName
         );
 
         try {
@@ -370,22 +372,17 @@ public class BethelaActivity extends AppCompatActivity {
             outputKeyFile.delete();
         }
 
-        Toast.makeText(this, "Key file saved to selected location", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Key file (" + newKeyFileName + ") saved in target location", Toast.LENGTH_LONG).show();
     }
 
     public boolean ready() {
-        if (!keyFileMode) {
-            password = tvPassword.getText().toString();
-        }
-
-        if (keyFileMode && uriKeyFile == null) {
+        if (keyFileMode && AES256_KEY == null) {
             Toast.makeText(this, "Select a key file", Toast.LENGTH_SHORT).show();
             return false;
-        } else if (!keyFileMode && password == null) {
+        }
+
+        if (!keyFileMode && tvPassword.getText().toString().isEmpty()) {
             Toast.makeText(this, "Input a password", Toast.LENGTH_SHORT).show();
-            return false;
-        } else if (!keyFileMode && password.length() < 8) {
-            Toast.makeText(this, "Password length should be 8 or greater", Toast.LENGTH_SHORT).show();
             return false;
         }
 
@@ -404,25 +401,17 @@ public class BethelaActivity extends AppCompatActivity {
 
     public void btnEncryptFiles (View v) {
         if (ready()) {
-            byte[] key;
-
-            if (keyFileMode) {
-                key = getKeyFile(uriKeyFile);;
-            } else {
-                key = sha256(tvPassword.getText().toString(), 5000);
-            }
-
-            if (key == null) {
-                if (keyFileMode) {
-                    Toast.makeText(this, "Encryption: KeyFile error", Toast.LENGTH_SHORT).show();
+            if (!keyFileMode) {
+                if (tvPassword.getText().toString().length() > 8) {
+                    AES256_KEY = sha256(tvPassword.getText().toString(), 5000);
                 } else {
-                    Toast.makeText(this, "Encryption: KeyPassword error", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Password should be greater than 8 characters", Toast.LENGTH_SHORT).show();
+                    return;
                 }
-                return;
             }
 
             try {
-                int res = encryptFiles(key, urisFiles, uriOutputFolder);
+                int res = encryptFiles(AES256_KEY, urisFiles, uriOutputFolder);
 
                 int fail_bit = (res >> 31) & 0x1;
 
@@ -432,6 +421,8 @@ public class BethelaActivity extends AppCompatActivity {
                 } else {
                     Toast.makeText(this, "All files(" + res + ") encrypted", Toast.LENGTH_SHORT).show();
                 }
+
+                btnClearFiles(null);
             } catch (Exception err) {
                 Toast.makeText(this, "Encryption error occur", Toast.LENGTH_SHORT).show();
             }
@@ -440,25 +431,17 @@ public class BethelaActivity extends AppCompatActivity {
 
     public void btnDecryptFiles (View v) {
         if (ready()) {
-            byte[] key;
-
-            if (keyFileMode) {
-                key = getKeyFile(uriKeyFile);;
-            } else {
-                key = sha256(tvPassword.getText().toString(), 5000);
-            }
-
-            if (key == null) {
-                if (keyFileMode) {
-                    Toast.makeText(this, "Decryption: KeyFile error", Toast.LENGTH_SHORT).show();
+            if (!keyFileMode) {
+                if (tvPassword.getText().toString().length() > 8) {
+                    AES256_KEY = sha256(tvPassword.getText().toString(), 5000);
                 } else {
-                    Toast.makeText(this, "Decryption: KeyPassword error", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Password should be greater than 8 characters", Toast.LENGTH_SHORT).show();
+                    return;
                 }
-                return;
             }
 
             try {
-                int res = decryptFiles(key, urisFiles, uriOutputFolder);
+                int res = decryptFiles(AES256_KEY, urisFiles, uriOutputFolder);
 
                 int fail_bit = (res >> 31) & 0x1;
 
@@ -468,6 +451,8 @@ public class BethelaActivity extends AppCompatActivity {
                 } else {
                     Toast.makeText(this, "All files(" + res + ") decrypted", Toast.LENGTH_SHORT).show();
                 }
+
+                btnClearFiles(null);
             } catch (Exception err) {
                 Toast.makeText(this, "Decryption error occur", Toast.LENGTH_SHORT).show();
             }
