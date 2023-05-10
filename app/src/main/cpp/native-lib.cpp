@@ -196,6 +196,8 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
   jobject globalOutputPath = env->NewGlobalRef(output_path);
 
   auto encrypt_lambda = [&] () -> void {
+    // TODO: check to attach and detach only if not on the main JNI thread.
+
     JNIEnv* threadEnv;
     javaVM->AttachCurrentThread((_JNIEnv**) &threadEnv, NULL);
 
@@ -358,6 +360,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
     vector_mtx.unlock();
   }
 
+  // TODO: enable encryption execution in the main JNI thread
 //  encrypt_lambda();
 
   for (size_t i = 0; i < physical_threads - 2; ++i) {
@@ -401,6 +404,8 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
   jobject globalOutputPath = env->NewGlobalRef(output_path);
 
   auto decrypt_lambda = [&] () -> void {
+    // TODO: check to attach and detach only if not on the main JNI thread.
+
     JNIEnv* threadEnv;
     javaVM->AttachCurrentThread((_JNIEnv**) &threadEnv, NULL);
 
@@ -567,6 +572,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
     vector_mtx.unlock();
   }
 
+  // TODO: enable decryption execution in the main JNI thread
 //  decrypt_lambda();
 
   for (size_t i = 0; i < physical_threads - 2; ++i) {

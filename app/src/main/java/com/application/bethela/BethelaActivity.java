@@ -410,6 +410,7 @@ public class BethelaActivity extends AppCompatActivity {
                 }
             }
 
+            // TODO: Spawn the following block of code to other thread to prevent UI blocking when encrypting large files.
             try {
                 int res = encryptFiles(AES256_KEY, urisFiles, uriOutputFolder);
 
@@ -440,6 +441,7 @@ public class BethelaActivity extends AppCompatActivity {
                 }
             }
 
+            // TODO: Spawn the following block of code to other thread to prevent UI blocking when decrypting large files.
             try {
                 int res = decryptFiles(AES256_KEY, urisFiles, uriOutputFolder);
 
