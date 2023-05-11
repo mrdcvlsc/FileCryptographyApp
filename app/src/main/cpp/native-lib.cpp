@@ -28,7 +28,7 @@ constexpr static size_t FILE_EXTENSION_SIZE = 5;
 constexpr static jint FILE_SIGNATURE_SIZE = 7;
 
 /// the size of one AES block in bytes.
-constexpr static jint AES_BLOCK_SIZE = 16;
+constexpr static size_t AES_BLOCK_SIZE = 16;
 
 extern "C" JNIEXPORT jstring JNICALL Java_com_application_bethela_BethelaActivity_doubleString (
   JNIEnv *env,
@@ -50,11 +50,13 @@ extern "C" JNIEXPORT jbyteArray JNICALL Java_com_application_bethela_BethelaActi
   jbyteArray arg,
   jint size
 ) {
-  const jbyte *read_only = env->GetByteArrayElements(arg, nullptr);
+  jbyte *read_only = env->GetByteArrayElements(arg, nullptr);
 
   jbyteArray doubleArray = env->NewByteArray(size * 2);
   env->SetByteArrayRegion(doubleArray, 0, size, read_only);
   env->SetByteArrayRegion(doubleArray, size, size, read_only);
+
+  env->ReleaseByteArrayElements(arg, read_only, 0);
 
   return doubleArray;
 }
@@ -182,11 +184,13 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
     aeskey_size
   );
 
-  std::atomic<size_t> cnt(0);
+  env->ReleaseByteArrayElements(key_file, aeskey, 0);
+
+  std::atomic<jint> cnt(0);
   std::mutex vector_mtx;
 
   if (BUFFER_SIZE % AES_BLOCK_SIZE != 0 || BUFFER_SIZE <= AES_BLOCK_SIZE) {
-    return 0xffffffff; // invalid buffer size
+    return -1; // invalid buffer size
   }
 
   JavaVM* javaVM;
@@ -205,9 +209,10 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
 
     Bytes *encryptedBuffer = new Bytes[BUFFER_SIZE];
 
+    std::string target_file;
+
     while (run_thread) {
       try {
-        std::string target_file;
         Uri target_uri(threadEnv);
 
         vector_mtx.lock();
@@ -256,9 +261,6 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
         threadEnv->SetByteArrayRegion(fileSignature, 0, FILE_SIGNATURE_SIZE, fileSig);
         outgoing_bytes.write(fileSignature, 0, FILE_SIGNATURE_SIZE);
 
-        jint length;
-        jbyteArray jniBuffer = threadEnv->NewByteArray(BUFFER_SIZE);
-
         // generate random IV
         unsigned char iv[AES_BLOCK_SIZE];
 
@@ -282,66 +284,103 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
         if (JNIException) {
           threadEnv->ExceptionDescribe();
           outgoing_bytes.close();
+          incoming_bytes.close();
           outputFile.Delete();
           continue;
         }
 
-        while ((length = incoming_bytes.read(jniBuffer)) > 0) {
-          jbyte *buffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(jniBuffer, NULL);
+        jbyteArray prevJniBuffer = threadEnv->NewByteArray(BUFFER_SIZE);
+        jint prevBufferSize = incoming_bytes.read(prevJniBuffer);
+        jbyte* prevBuffer = nullptr;
 
-          if (length == BUFFER_SIZE) {
-            for (size_t index = 0; index < length; index += AES_BLOCK_SIZE) {
-              aes_scheme.blockEncrypt(
-                reinterpret_cast<unsigned char *>(buffer + index),
-                reinterpret_cast<unsigned char *>(encryptedBuffer + index),
-                reinterpret_cast<unsigned char *>(iv)
-              );
-            }
+        jbyteArray nextJniBuffer = threadEnv->NewByteArray(BUFFER_SIZE);
+        jint nextBufferSize = 0;
 
-            threadEnv->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
-            threadEnv->SetByteArrayRegion(
-              jniBuffer, 0, length,
-              reinterpret_cast<jbyte *>(encryptedBuffer));
-            outgoing_bytes.write(jniBuffer, 0, length);
-          } else {
-            size_t remaining_blocks = length / AES_BLOCK_SIZE;
-            size_t index;
-
-            for (index = 0; index < remaining_blocks - 1; ++index) {
-              aes_scheme.blockEncrypt(
-                reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK_SIZE)),
-                reinterpret_cast<unsigned char *>(encryptedBuffer + (index * AES_BLOCK_SIZE)),
-                reinterpret_cast<unsigned char *>(iv)
-              );
-            }
-
-            threadEnv->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
-            threadEnv->SetByteArrayRegion(
-              jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK_SIZE,
-              reinterpret_cast<jbyte *>(encryptedBuffer));
-            outgoing_bytes.write(jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK_SIZE);
-
-            ByteArray recover = aes_scheme.encrypt(
-              reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK_SIZE)),
-              AES_BLOCK_SIZE, reinterpret_cast<unsigned char *>(iv)
-            );
-
-            threadEnv->SetByteArrayRegion(
-              jniBuffer, 0, recover.length,
-              reinterpret_cast<jbyte *>(recover.array));
-            outgoing_bytes.write(jniBuffer, 0, recover.length);
+        while (prevBufferSize == BUFFER_SIZE) {
+          nextBufferSize = incoming_bytes.read(nextJniBuffer);
+          if (nextBufferSize < 1) {
+            break;
           }
+
+          prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+          for (size_t index = 0; index < prevBufferSize; index += AES_BLOCK_SIZE) {
+            aes_scheme.blockEncrypt(
+              reinterpret_cast<unsigned char *>(prevBuffer + index),
+              reinterpret_cast<unsigned char *>(encryptedBuffer + index),
+              reinterpret_cast<unsigned char *>(iv)
+            );
+          }
+          threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
+
+          threadEnv->SetByteArrayRegion(
+            prevJniBuffer, 0, prevBufferSize,
+            reinterpret_cast<jbyte *>(encryptedBuffer));
+          outgoing_bytes.write(prevJniBuffer, 0, prevBufferSize);
+
+          std::swap(prevJniBuffer, nextJniBuffer);
+          std::swap(prevBufferSize, nextBufferSize);
         }
 
+        prevBufferSize = (prevBufferSize < 1) ? 0 : prevBufferSize;
+
+        size_t remainingBlocks = prevBufferSize / AES_BLOCK_SIZE;
+        size_t remainingBytes = prevBufferSize % AES_BLOCK_SIZE;
+        size_t index = 0;
+
+        bool excludeLastBlock = (remainingBlocks && remainingBytes == 0);
+
+        if (remainingBlocks) {
+          prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+
+          for (; index < remainingBlocks - excludeLastBlock; ++index) {
+            aes_scheme.blockEncrypt(
+              reinterpret_cast<unsigned char *>(prevBuffer + (index * AES_BLOCK_SIZE)),
+              reinterpret_cast<unsigned char *>(encryptedBuffer + (index * AES_BLOCK_SIZE)), iv
+            );
+          }
+
+          threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
+          threadEnv->SetByteArrayRegion(
+            prevJniBuffer, 0, (remainingBlocks - excludeLastBlock) * AES_BLOCK_SIZE,
+            reinterpret_cast<jbyte *>(encryptedBuffer)
+          );
+          outgoing_bytes.write(prevJniBuffer, 0, (remainingBlocks - excludeLastBlock) * AES_BLOCK_SIZE);
+        }
+
+        Krypt::ByteArray cipher;
+
+        prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+        if (excludeLastBlock) {
+          cipher = aes_scheme.encrypt(
+            reinterpret_cast<unsigned char *>(prevBuffer + (index * AES_BLOCK_SIZE)), AES_BLOCK_SIZE, iv
+          );
+        } else {
+          cipher = aes_scheme.encrypt(
+            reinterpret_cast<unsigned char *>(prevBuffer + (index * AES_BLOCK_SIZE)), remainingBytes, iv
+          );
+        }
+        threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
+
+        threadEnv->SetByteArrayRegion(
+          prevJniBuffer, 0, cipher.length,
+          reinterpret_cast<jbyte *>(cipher.array));
+        outgoing_bytes.write(prevJniBuffer, 0, cipher.length);
+
         if (threadEnv->ExceptionCheck()) {
+          __android_log_write(ANDROID_LOG_ERROR, "encryption", "Exception Occurred");
           threadEnv->ExceptionDescribe();
           outgoing_bytes.close();
+          incoming_bytes.close();
           outputFile.Delete();
         } else {
           cnt++;
         }
-      } catch (...) {
-        continue;
+      } catch (const char* err) {
+        __android_log_write(ANDROID_LOG_ERROR, "C++ Encryption ", std::string(target_file + " : " + std::string(err)).c_str());
+      } catch (const std::exception& err) {
+        __android_log_write(ANDROID_LOG_ERROR, "C++ Encryption ", std::string(target_file + " : " + std::string(err.what())).c_str());
+      }  catch (...) {
+        __android_log_write(ANDROID_LOG_ERROR, "C++ Encryption ", std::string(target_file + " : Unknown C++ Exception Occurred").c_str());
       }
     }
 
@@ -356,14 +395,18 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
 
   for (size_t i = 0; i < physical_threads - 2; ++i) {
     vector_mtx.lock();
-    threads.push_back(std::thread(encrypt_lambda));
+    bool notEmpty = !file_queue.isEmpty();
+
+    if (notEmpty) {
+      threads.push_back(std::thread(encrypt_lambda));
+    }
     vector_mtx.unlock();
   }
 
   // TODO: enable encryption execution in the main JNI thread
 //  encrypt_lambda();
 
-  for (size_t i = 0; i < physical_threads - 2; ++i) {
+  for (size_t i = 0; i < threads.size(); ++i) {
     threads[i].join();
   }
 
@@ -390,11 +433,13 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
     aeskey_size
   );
 
-  std::atomic<size_t> cnt(0);
+  env->ReleaseByteArrayElements(key_file, aeskey, 0);
+
+  std::atomic<jint> cnt(0);
   std::mutex vector_mtx;
 
   if (BUFFER_SIZE % AES_BLOCK_SIZE != 0 || BUFFER_SIZE <= AES_BLOCK_SIZE) {
-    return 0xffffffff; // invalid buffer size
+    return -1; // invalid buffer size
   }
 
   JavaVM* javaVM;
@@ -413,16 +458,17 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 
     Bytes *decryptedBuffer = new Bytes[BUFFER_SIZE];
 
+    std::string target_file;
+
     while (run_thread) {
       try {
-        std::string target_file;
         Uri target_uri(threadEnv);
 
         vector_mtx.lock();
         run_thread = !file_queue.isEmpty(threadEnv);
 
         if (run_thread) {
-          target_uri._thiz = file_queue.remove(threadEnv, file_queue.size(threadEnv) - 1)._thiz;
+          target_uri._thiz = file_queue.remove(threadEnv, 0)._thiz;
           target_uri._Jclass = threadEnv->GetObjectClass(target_uri._thiz);
           jstring filename = getFileName(threadEnv, globalThis, target_uri._thiz);
           const char *c_filename_buffer = threadEnv->GetStringUTFChars(filename, NULL);
@@ -439,6 +485,13 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
           threadEnv,
           openFileUriInputStream(threadEnv, globalThis, target_uri._thiz)
         );
+
+        InputStream readIncomingByteLength = InputStream(
+          threadEnv,
+          openFileUriInputStream(threadEnv, globalThis, target_uri._thiz)
+        );
+
+        jbyteArray advanceReader = threadEnv->NewByteArray(BUFFER_SIZE);
 
         std::string outfname(target_file);
         std::string fileExtension = "";
@@ -468,6 +521,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 
         jbyteArray fileSignature = threadEnv->NewByteArray(FILE_SIGNATURE_SIZE);
         incoming_bytes.read(fileSignature);
+        readIncomingByteLength.read(advanceReader);
 
         const jbyte fileSig[FILE_SIGNATURE_SIZE] = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
         jbyte *fileSigRead = threadEnv->GetByteArrayElements(fileSignature, NULL);
@@ -476,6 +530,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
         jbyteArray jniBuffer = threadEnv->NewByteArray(BUFFER_SIZE);
         jbyteArray jniIV = threadEnv->NewByteArray(AES_BLOCK_SIZE);
         incoming_bytes.read(jniIV);
+        readIncomingByteLength.read(advanceReader);
         jbyte *iv = threadEnv->GetByteArrayElements(jniIV, NULL);
 
         std::string properFileExtension = ".bthl";
@@ -491,69 +546,109 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
             threadEnv->ExceptionDescribe();
           }
 
+          incoming_bytes.close();
           outgoing_bytes.close();
           outputFile.Delete();
           continue;
         }
 
-        while ((length = incoming_bytes.read(jniBuffer)) > 0) {
-          jbyte *buffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(jniBuffer, NULL);
+        jbyteArray prevJniBuffer = threadEnv->NewByteArray(BUFFER_SIZE);
+        jint prevBufferSize = incoming_bytes.read(prevJniBuffer);
+        jbyte* prevBuffer = nullptr;
 
-          if (length == BUFFER_SIZE) {
-            for (size_t index = 0; index < length; index += AES_BLOCK_SIZE) {
-              aes_scheme.blockDecrypt(
-                reinterpret_cast<unsigned char *>(buffer + index),
-                reinterpret_cast<unsigned char *>(decryptedBuffer + index),
-                reinterpret_cast<unsigned char *>(iv)
-              );
-            }
+        jbyteArray nextJniBuffer = threadEnv->NewByteArray(BUFFER_SIZE);
+        jint nextBufferSize = 0;
 
-            threadEnv->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
-            threadEnv->SetByteArrayRegion(
-              jniBuffer, 0, length,
-              reinterpret_cast<jbyte *>(decryptedBuffer));
-            outgoing_bytes.write(jniBuffer, 0, length);
-          } else {
-            size_t remaining_blocks = length / AES_BLOCK_SIZE;
-            size_t index;
-
-            for (index = 0; index < remaining_blocks - 1; ++index) {
-              aes_scheme.blockDecrypt(
-                reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK_SIZE)),
-                reinterpret_cast<unsigned char *>(decryptedBuffer + (index * AES_BLOCK_SIZE)),
-                reinterpret_cast<unsigned char *>(iv)
-              );
-            }
-
-            threadEnv->ReleasePrimitiveArrayCritical(jniBuffer, buffer, 0);
-            threadEnv->SetByteArrayRegion(
-              jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK_SIZE,
-              reinterpret_cast<jbyte *>(decryptedBuffer));
-            outgoing_bytes.write(jniBuffer, 0, (remaining_blocks - 1) * AES_BLOCK_SIZE);
-
-            ByteArray recover = aes_scheme.decrypt(
-              reinterpret_cast<unsigned char *>(buffer + (index * AES_BLOCK_SIZE)),
-              AES_BLOCK_SIZE, reinterpret_cast<unsigned char *>(iv)
-            );
-
-            threadEnv->SetByteArrayRegion(
-              jniBuffer, 0, recover.length,
-              reinterpret_cast<jbyte *>(recover.array));
-            outgoing_bytes.write(jniBuffer, 0, recover.length);
+        while (prevBufferSize == BUFFER_SIZE) {
+          nextBufferSize = incoming_bytes.read(nextJniBuffer);
+          if (nextBufferSize < 1) {
+            break;
           }
+
+          prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+          for (size_t index = 0; index < prevBufferSize; index += AES_BLOCK_SIZE) {
+            aes_scheme.blockDecrypt(
+              reinterpret_cast<unsigned char *>(prevBuffer + index),
+              reinterpret_cast<unsigned char *>(decryptedBuffer + index),
+              reinterpret_cast<unsigned char *>(iv)
+            );
+          }
+          threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
+
+          threadEnv->SetByteArrayRegion(
+            prevJniBuffer, 0, prevBufferSize,
+            reinterpret_cast<jbyte *>(decryptedBuffer));
+          outgoing_bytes.write(prevJniBuffer, 0, prevBufferSize);
+
+          std::swap(prevJniBuffer, nextJniBuffer);
+          std::swap(prevBufferSize, nextBufferSize);
         }
 
+        prevBufferSize = (prevBufferSize < 1) ? 0 : prevBufferSize;
+
+        size_t remainingBlocks = prevBufferSize / AES_BLOCK_SIZE;
+        size_t remainingBytes = prevBufferSize % AES_BLOCK_SIZE;
+        size_t index = 0;
+
+        bool excludeLastBlock = (remainingBlocks && remainingBytes == 0);
+
+        if (remainingBlocks) {
+          prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+          for (; index < remainingBlocks - excludeLastBlock; ++index) {
+            aes_scheme.blockDecrypt(
+              reinterpret_cast<unsigned char *>(prevBuffer + (index * AES_BLOCK_SIZE)),
+              reinterpret_cast<unsigned char *>(decryptedBuffer + (index * AES_BLOCK_SIZE)),
+              reinterpret_cast<unsigned char *>(iv)
+            );
+          }
+          threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
+          threadEnv->SetByteArrayRegion(
+            prevJniBuffer, 0, (remainingBlocks - excludeLastBlock) * AES_BLOCK_SIZE,
+            reinterpret_cast<jbyte *>(decryptedBuffer)
+          );
+
+          outgoing_bytes.write(prevJniBuffer, 0, (remainingBlocks - excludeLastBlock) * AES_BLOCK_SIZE);
+        }
+
+        Krypt::ByteArray recover;
+
+        prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+        if (excludeLastBlock) {
+          recover = aes_scheme.decrypt(
+            reinterpret_cast<unsigned char *>(prevBuffer + (index * AES_BLOCK_SIZE)),
+            AES_BLOCK_SIZE,
+            reinterpret_cast<unsigned char *>(iv)
+          );
+        } else {
+          recover = aes_scheme.decrypt(
+            reinterpret_cast<unsigned char *>(prevBuffer + (index * AES_BLOCK_SIZE)),
+            remainingBytes,
+            reinterpret_cast<unsigned char *>(iv)
+          );
+        }
+        threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
         threadEnv->ReleaseByteArrayElements(jniIV, iv, 0);
 
+        threadEnv->SetByteArrayRegion(
+          prevJniBuffer, 0, recover.length,
+          reinterpret_cast<jbyte *>(recover.array));
+        outgoing_bytes.write(prevJniBuffer, 0, recover.length);
+
         if (threadEnv->ExceptionCheck()) {
+          __android_log_write(ANDROID_LOG_ERROR, "decryption", "JNI Exception Occurred");
           threadEnv->ExceptionDescribe();
+          incoming_bytes.close();
           outgoing_bytes.close();
           outputFile.Delete();
         } else {
           cnt++;
         }
-      } catch (...) {
-        continue;
+      } catch (const char* err) {
+        __android_log_write(ANDROID_LOG_ERROR, "C++ Decryption ", std::string(target_file + " : " + std::string(err)).c_str());
+      } catch (const std::exception& err) {
+        __android_log_write(ANDROID_LOG_ERROR, "C++ Decryption ", std::string(target_file + " : " + std::string(err.what())).c_str());
+      }  catch (...) {
+        __android_log_write(ANDROID_LOG_ERROR, "C++ Decryption ", std::string(target_file + " : Unknown C++ Exception Occurred").c_str());
       }
     }
 
@@ -568,14 +663,18 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 
   for (size_t i = 0; i < physical_threads - 2; ++i) {
     vector_mtx.lock();
-    threads.push_back(std::thread(decrypt_lambda));
+    bool notEmpty = !file_queue.isEmpty();
+
+    if (notEmpty) {
+      threads.push_back(std::thread(decrypt_lambda));
+    }
     vector_mtx.unlock();
   }
 
   // TODO: enable decryption execution in the main JNI thread
 //  decrypt_lambda();
 
-  for (size_t i = 0; i < physical_threads - 2; ++i) {
+  for (size_t i = 0; i < threads.size(); ++i) {
     threads[i].join();
   }
 

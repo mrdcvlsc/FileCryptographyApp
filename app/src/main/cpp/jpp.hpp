@@ -52,6 +52,8 @@ namespace Jpp {
 
     jmethodID _m_read;
     jmethodID _m_close;
+    jmethodID  _m_mark;
+    jmethodID  _m_reset;
 
     InputStream(JNIEnv *env, jobject input_stream) {
       this->_env = env;
@@ -62,11 +64,23 @@ namespace Jpp {
       _m_read = env->GetMethodID(_Jclass, "read", "([B)I");
 
       _m_close = env->GetMethodID(_Jclass, "close", "()V");
+
+      _m_mark = env->GetMethodID(_Jclass, "mark", "(I)V");
+
+      _m_reset = env->GetMethodID(_Jclass, "reset", "()V");
     }
 
     jint read(jbyteArray b) {
       return _env->CallIntMethod(_thiz, _m_read, b);
     };
+
+    void mark(jint readLimit) {
+      _env->CallVoidMethod(_thiz, _m_mark, readLimit);
+    }
+
+    void reset() {
+      _env->CallVoidMethod(_thiz, _m_reset);
+    }
 
     void close() {
       _env->CallVoidMethod(_thiz, _m_close);

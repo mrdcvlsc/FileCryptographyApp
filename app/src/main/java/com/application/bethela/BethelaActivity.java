@@ -13,6 +13,8 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.OpenableColumns;
 import android.util.Log;
 import android.view.View;
@@ -400,6 +402,8 @@ public class BethelaActivity extends AppCompatActivity {
     }
 
     public void btnEncryptFiles (View v) {
+        int totalFiles = urisFiles.size();
+
         if (ready()) {
             if (!keyFileMode) {
                 if (tvPassword.getText().toString().length() > 8) {
@@ -410,27 +414,36 @@ public class BethelaActivity extends AppCompatActivity {
                 }
             }
 
-            // TODO: Spawn the following block of code to other thread to prevent UI blocking when encrypting large files.
-            try {
-                int res = encryptFiles(AES256_KEY, urisFiles, uriOutputFolder);
+            Handler handler = new Handler(Looper.getMainLooper());
 
-                int fail_bit = (res >> 31) & 0x1;
+            Runnable runnable = new Runnable() {
+                @Override
+                public void run() {
+                    int res = 0;
 
-                if (fail_bit == 0x1) {
-                    res = ~((0x1 << 31) | ~res);
-                    Toast.makeText(this, "Some files(" + res + ") encrypted, others FAILED!", Toast.LENGTH_SHORT).show();
-                } else {
-                    Toast.makeText(this, "All files(" + res + ") encrypted", Toast.LENGTH_SHORT).show();
+                    synchronized (this) {
+                        res = encryptFiles(AES256_KEY, urisFiles, uriOutputFolder);
+                    }
+
+                    int finalRes = res;
+                    handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            Toast.makeText(BethelaActivity.this, "Encrypted " + finalRes + "/" + totalFiles, Toast.LENGTH_SHORT).show();
+                            btnClearFiles(null);
+                        }
+                    });
                 }
+            };
 
-                btnClearFiles(null);
-            } catch (Exception err) {
-                Toast.makeText(this, "Encryption error occur", Toast.LENGTH_SHORT).show();
-            }
+            Thread thread = new Thread(runnable);
+            thread.start();
         }
     }
 
     public void btnDecryptFiles (View v) {
+        int totalFiles = urisFiles.size();
+
         if (ready()) {
             if (!keyFileMode) {
                 if (tvPassword.getText().toString().length() > 8) {
@@ -441,23 +454,30 @@ public class BethelaActivity extends AppCompatActivity {
                 }
             }
 
-            // TODO: Spawn the following block of code to other thread to prevent UI blocking when decrypting large files.
-            try {
-                int res = decryptFiles(AES256_KEY, urisFiles, uriOutputFolder);
+            Handler handler = new Handler(Looper.getMainLooper());
 
-                int fail_bit = (res >> 31) & 0x1;
+            Runnable runnable = new Runnable() {
+                @Override
+                public void run() {
+                    int res = 0;
 
-                if (fail_bit == 0x1) {
-                    res = ~((0x1 << 31) | ~res);
-                    Toast.makeText(this, "Some files(" + res + ") decrypted, others FAILED!", Toast.LENGTH_SHORT).show();
-                } else {
-                    Toast.makeText(this, "All files(" + res + ") decrypted", Toast.LENGTH_SHORT).show();
+                    synchronized (this) {
+                        res = decryptFiles(AES256_KEY, urisFiles, uriOutputFolder);
+                    }
+
+                    int finalRes = res;
+                    handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            Toast.makeText(BethelaActivity.this, "Decrypted " + finalRes + "/" + totalFiles, Toast.LENGTH_SHORT).show();
+                            btnClearFiles(null);
+                        }
+                    });
                 }
+            };
 
-                btnClearFiles(null);
-            } catch (Exception err) {
-                Toast.makeText(this, "Decryption error occur", Toast.LENGTH_SHORT).show();
-            }
+            Thread thread = new Thread(runnable);
+            thread.start();
         }
     }
 
