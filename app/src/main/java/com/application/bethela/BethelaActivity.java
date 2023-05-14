@@ -39,9 +39,6 @@ public class BethelaActivity extends AppCompatActivity {
     }
 
     final int AES256_KEYSIZE = 32;
-
-    // TODO: Isolate isolatable methods and function into class.java files
-
     private Uri uriOutputFolder;
     private Uri uriKeyFile;
     private ArrayList<Uri> urisFiles;
@@ -50,9 +47,7 @@ public class BethelaActivity extends AppCompatActivity {
     private TextView tvFiles;
     private TextView tvSaveFolder;
     private String password;
-
     private boolean keyFileMode;
-
     private byte[] AES256_KEY;
 
     @Override
@@ -415,7 +410,6 @@ public class BethelaActivity extends AppCompatActivity {
             }
 
             Handler handler = new Handler(Looper.getMainLooper());
-
             Runnable runnable = new Runnable() {
                 @Override
                 public void run() {
@@ -429,7 +423,11 @@ public class BethelaActivity extends AppCompatActivity {
                     handler.post(new Runnable() {
                         @Override
                         public void run() {
-                            Toast.makeText(BethelaActivity.this, "Encrypted " + finalRes + "/" + totalFiles, Toast.LENGTH_SHORT).show();
+                            if (finalRes < 0) {
+                                Toast.makeText(BethelaActivity.this, "Encrypt Error, Invalid Internal Buffer", Toast.LENGTH_SHORT).show();
+                            } else {
+                                Toast.makeText(BethelaActivity.this, "Encrypted " + finalRes + "/" + totalFiles, Toast.LENGTH_SHORT).show();
+                            }
                             btnClearFiles(null);
                         }
                     });
@@ -455,7 +453,6 @@ public class BethelaActivity extends AppCompatActivity {
             }
 
             Handler handler = new Handler(Looper.getMainLooper());
-
             Runnable runnable = new Runnable() {
                 @Override
                 public void run() {
@@ -469,7 +466,11 @@ public class BethelaActivity extends AppCompatActivity {
                     handler.post(new Runnable() {
                         @Override
                         public void run() {
-                            Toast.makeText(BethelaActivity.this, "Decrypted " + finalRes + "/" + totalFiles, Toast.LENGTH_SHORT).show();
+                            if (finalRes < 0) {
+                                Toast.makeText(BethelaActivity.this, "Decrypt Error, Invalid Internal Buffer", Toast.LENGTH_SHORT).show();
+                            } else {
+                                Toast.makeText(BethelaActivity.this, "Decrypted " + finalRes + "/" + totalFiles, Toast.LENGTH_SHORT).show();
+                            }
                             btnClearFiles(null);
                         }
                     });

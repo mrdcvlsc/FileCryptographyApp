@@ -144,6 +144,12 @@ extern "C" JNIEXPORT jintArray JNICALL Java_com_application_bethela_BethelaActiv
   return arr;
 }
 
+namespace RESULT_CODE {
+  jint INVALID_INTERNAL_BUFFER_SIZE = -1;
+  jint THREAD_ATTACHMENT_FAILED = -2;
+  jint FILE_ERROR = -3;
+}
+
 /// equivalent to : `this.getApplicationContext().getContentResolver().openInputStream(Uri);`
 jobject openFileUriInputStream (JNIEnv *env, jobject thiz, jobject uri) {
   return Activity(env, thiz)
@@ -190,7 +196,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
   std::mutex vector_mtx;
 
   if (BUFFER_SIZE % AES_BLOCK_SIZE != 0 || BUFFER_SIZE <= AES_BLOCK_SIZE) {
-    return -1; // invalid buffer size
+    return RESULT_CODE::INVALID_INTERNAL_BUFFER_SIZE;
   }
 
   JavaVM* javaVM;
@@ -200,10 +206,18 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
   jobject globalOutputPath = env->NewGlobalRef(output_path);
 
   auto encrypt_lambda = [&] () -> void {
-    // TODO: check to attach and detach only if not on the main JNI thread.
-
     JNIEnv* threadEnv;
-    javaVM->AttachCurrentThread((_JNIEnv**) &threadEnv, NULL);
+
+    jint isDifferentThread = javaVM->GetEnv((void **) &threadEnv, JNI_VERSION_1_6);
+
+    if (isDifferentThread == JNI_EDETACHED) {
+      javaVM->AttachCurrentThread((_JNIEnv**) &threadEnv, NULL);
+    } else if (isDifferentThread == JNI_OK) {
+      threadEnv = env;
+    } else {
+      __android_log_write(ANDROID_LOG_ERROR, "C++ Decryption ", "thread attachment failed");
+      return;
+    }
 
     bool run_thread = true;
 
@@ -367,7 +381,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
         outgoing_bytes.write(prevJniBuffer, 0, cipher.length);
 
         if (threadEnv->ExceptionCheck()) {
-          __android_log_write(ANDROID_LOG_ERROR, "encryption", "Exception Occurred");
+          __android_log_write(ANDROID_LOG_ERROR, "C++ Encryption", "JNI Exception Occurred At Last Check");
           threadEnv->ExceptionDescribe();
           outgoing_bytes.close();
           incoming_bytes.close();
@@ -386,7 +400,9 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
 
     delete[] encryptedBuffer;
 
-    javaVM->DetachCurrentThread();
+    if (isDifferentThread == JNI_EDETACHED) {
+      javaVM->DetachCurrentThread();
+    }
   };
 
   int physical_threads = std::thread::hardware_concurrency();
@@ -396,15 +412,20 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
   for (size_t i = 0; i < physical_threads - 2; ++i) {
     vector_mtx.lock();
     bool notEmpty = !file_queue.isEmpty();
+    vector_mtx.unlock();
 
     if (notEmpty) {
       threads.push_back(std::thread(encrypt_lambda));
     }
-    vector_mtx.unlock();
   }
 
-  // TODO: enable encryption execution in the main JNI thread
-//  encrypt_lambda();
+  vector_mtx.lock();
+  bool notEmpty = !file_queue.isEmpty();
+  vector_mtx.unlock();
+
+  if (notEmpty) {
+    encrypt_lambda();
+  }
 
   for (size_t i = 0; i < threads.size(); ++i) {
     threads[i].join();
@@ -439,7 +460,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
   std::mutex vector_mtx;
 
   if (BUFFER_SIZE % AES_BLOCK_SIZE != 0 || BUFFER_SIZE <= AES_BLOCK_SIZE) {
-    return -1; // invalid buffer size
+    return RESULT_CODE::INVALID_INTERNAL_BUFFER_SIZE;
   }
 
   JavaVM* javaVM;
@@ -449,10 +470,18 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
   jobject globalOutputPath = env->NewGlobalRef(output_path);
 
   auto decrypt_lambda = [&] () -> void {
-    // TODO: check to attach and detach only if not on the main JNI thread.
-
     JNIEnv* threadEnv;
-    javaVM->AttachCurrentThread((_JNIEnv**) &threadEnv, NULL);
+
+    jint isDifferentThread = javaVM->GetEnv((void **) &threadEnv, JNI_VERSION_1_6);
+
+    if (isDifferentThread == JNI_EDETACHED) {
+      javaVM->AttachCurrentThread((_JNIEnv**) &threadEnv, NULL);
+    } else if (isDifferentThread == JNI_OK) {
+      threadEnv = env;
+    } else {
+      __android_log_write(ANDROID_LOG_ERROR, "C++ Decryption ", "thread attachment failed");
+      return;
+    }
 
     bool run_thread = true;
 
@@ -545,7 +574,6 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
           if (JNIException) {
             threadEnv->ExceptionDescribe();
           }
-
           incoming_bytes.close();
           outgoing_bytes.close();
           outputFile.Delete();
@@ -635,7 +663,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
         outgoing_bytes.write(prevJniBuffer, 0, recover.length);
 
         if (threadEnv->ExceptionCheck()) {
-          __android_log_write(ANDROID_LOG_ERROR, "decryption", "JNI Exception Occurred");
+          __android_log_write(ANDROID_LOG_ERROR, "C++ Decryption", "JNI Exception Occurred At Last Check");
           threadEnv->ExceptionDescribe();
           incoming_bytes.close();
           outgoing_bytes.close();
@@ -654,7 +682,9 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 
     delete[] decryptedBuffer;
 
-    javaVM->DetachCurrentThread();
+    if (isDifferentThread == JNI_EDETACHED) {
+      javaVM->DetachCurrentThread();
+    }
   };
 
   int physical_threads = std::thread::hardware_concurrency();
@@ -664,15 +694,20 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
   for (size_t i = 0; i < physical_threads - 2; ++i) {
     vector_mtx.lock();
     bool notEmpty = !file_queue.isEmpty();
+    vector_mtx.unlock();
 
     if (notEmpty) {
       threads.push_back(std::thread(decrypt_lambda));
     }
-    vector_mtx.unlock();
   }
 
-  // TODO: enable decryption execution in the main JNI thread
-//  decrypt_lambda();
+  vector_mtx.lock();
+  bool notEmpty = !file_queue.isEmpty();
+  vector_mtx.unlock();
+
+  if (notEmpty) {
+    decrypt_lambda();
+  }
 
   for (size_t i = 0; i < threads.size(); ++i) {
     threads[i].join();
