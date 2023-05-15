@@ -321,7 +321,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
             break;
           }
 
-          prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+          prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, NULL);
           for (size_t index = 0; index < prevBufferSize; index += AES_BLOCK_SIZE) {
             aes_scheme.blockEncrypt(
               reinterpret_cast<unsigned char *>(prevBuffer + index),
@@ -329,7 +329,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
               reinterpret_cast<unsigned char *>(iv)
             );
           }
-          threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
+          threadEnv->ReleasePrimitiveArrayCritical(prevJniBuffer, prevBuffer, JNI_ABORT);
 
           threadEnv->SetByteArrayRegion(
             prevJniBuffer, 0, prevBufferSize,
@@ -349,7 +349,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
         bool excludeLastBlock = (remainingBlocks && remainingBytes == 0);
 
         if (remainingBlocks) {
-          prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+          prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, NULL);
 
           for (; index < remainingBlocks - excludeLastBlock; ++index) {
             aes_scheme.blockEncrypt(
@@ -358,7 +358,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
             );
           }
 
-          threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
+          threadEnv->ReleasePrimitiveArrayCritical(prevJniBuffer, prevBuffer, JNI_ABORT);
           threadEnv->SetByteArrayRegion(
             prevJniBuffer, 0, (remainingBlocks - excludeLastBlock) * AES_BLOCK_SIZE,
             reinterpret_cast<jbyte *>(encryptedBuffer)
@@ -368,7 +368,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
 
         Krypt::ByteArray cipher;
 
-        prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+        prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, NULL);
         if (excludeLastBlock) {
           cipher = aes_scheme.encrypt(
             reinterpret_cast<unsigned char *>(prevBuffer + (index * AES_BLOCK_SIZE)), AES_BLOCK_SIZE, iv
@@ -378,7 +378,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
             reinterpret_cast<unsigned char *>(prevBuffer + (index * AES_BLOCK_SIZE)), remainingBytes, iv
           );
         }
-        threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
+        threadEnv->ReleasePrimitiveArrayCritical(prevJniBuffer, prevBuffer, JNI_ABORT);
 
         threadEnv->SetByteArrayRegion(
           prevJniBuffer, 0, cipher.length,
@@ -616,7 +616,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
             break;
           }
 
-          prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+          prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, NULL);
           for (size_t index = 0; index < prevBufferSize; index += AES_BLOCK_SIZE) {
             aes_scheme.blockDecrypt(
               reinterpret_cast<unsigned char *>(prevBuffer + index),
@@ -624,7 +624,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
               reinterpret_cast<unsigned char *>(iv)
             );
           }
-          threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
+          threadEnv->ReleasePrimitiveArrayCritical(prevJniBuffer, prevBuffer, JNI_ABORT);
 
           threadEnv->SetByteArrayRegion(
             prevJniBuffer, 0, prevBufferSize,
@@ -644,7 +644,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
         bool excludeLastBlock = (remainingBlocks && remainingBytes == 0);
 
         if (remainingBlocks) {
-          prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+          prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, NULL);
 
           for (; index < remainingBlocks - excludeLastBlock; ++index) {
             aes_scheme.blockDecrypt(
@@ -654,7 +654,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
             );
           }
 
-          threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
+          threadEnv->ReleasePrimitiveArrayCritical(prevJniBuffer, prevBuffer, JNI_ABORT);
           threadEnv->SetByteArrayRegion(
             prevJniBuffer, 0, (remainingBlocks - excludeLastBlock) * AES_BLOCK_SIZE,
             reinterpret_cast<jbyte *>(decryptedBuffer)
@@ -665,7 +665,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 
         Krypt::ByteArray recover;
 
-        prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+        prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, NULL);
 
         if (excludeLastBlock) {
           recover = aes_scheme.decrypt(
@@ -681,7 +681,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
           );
         }
 
-        threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
+        threadEnv->ReleasePrimitiveArrayCritical(prevJniBuffer, prevBuffer, JNI_ABORT);
         threadEnv->ReleaseByteArrayElements(jniIV, iv, 0);
 
         threadEnv->SetByteArrayRegion(
