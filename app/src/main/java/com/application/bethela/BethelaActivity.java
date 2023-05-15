@@ -18,6 +18,8 @@ import android.os.Looper;
 import android.provider.OpenableColumns;
 import android.util.Log;
 import android.view.View;
+import android.widget.ImageButton;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -39,6 +41,7 @@ public class BethelaActivity extends AppCompatActivity {
     }
 
     final int AES256_KEYSIZE = 32;
+
     private Uri uriOutputFolder;
     private Uri uriKeyFile;
     private ArrayList<Uri> urisFiles;
@@ -49,6 +52,17 @@ public class BethelaActivity extends AppCompatActivity {
     private String password;
     private boolean keyFileMode;
     private byte[] AES256_KEY;
+    private ProgressBar progressBar;
+
+    private ImageButton imgBtnSelectKeyFile;
+    private ImageButton imgBtnSelectPassword;
+    private ImageButton imgBtnGenerateKey;
+    private ImageButton imgBtnClearKeys;
+    private ImageButton imgBtnSelectFiles;
+    private ImageButton imgBtnClearFiles;
+    private ImageButton imgBtnSelectLocation;
+    private ImageButton imgBtnEncrypt;
+    private ImageButton imgBtnDecrypt;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -60,12 +74,40 @@ public class BethelaActivity extends AppCompatActivity {
         tvKeyFile = findViewById(R.id.tv_app_filekey);
         tvSaveFolder = findViewById(R.id.tv_app_saveinfolder);
         tvFiles = findViewById(R.id.tv_app_selectedfiles);
+        progressBar = findViewById(R.id.pb_app_wait);
+        progressBar.setIndeterminate(true);
+
+        imgBtnSelectKeyFile = findViewById(R.id.btn_app_filekey);
+        imgBtnSelectPassword = findViewById(R.id.btn_app_passwordkey);
+        imgBtnGenerateKey = findViewById(R.id.btn_app_generatekey);
+        imgBtnClearKeys = findViewById(R.id.btn_app_clearkey);
+        imgBtnSelectFiles = findViewById(R.id.btn_app_selectfiles);
+        imgBtnClearFiles = findViewById(R.id.btn_app_clearfiles);
+        imgBtnSelectLocation = findViewById(R.id.btn_app_savein);
+        imgBtnEncrypt = findViewById(R.id.btn_app_encrypt);
+        imgBtnDecrypt = findViewById(R.id.btn_app_decrypt);
 
         tvPassword.setVisibility(View.INVISIBLE);
 
         urisFiles = new ArrayList<>();
 
         keyFileMode = true;
+    }
+
+    // ##################################################################################
+    // UI method section
+    // ##################################################################################
+
+    private void allBtnSetEnabled(boolean enable) {
+        imgBtnSelectKeyFile.setEnabled(enable);
+        imgBtnSelectPassword.setEnabled(enable);;
+        imgBtnGenerateKey.setEnabled(enable);;
+        imgBtnClearKeys.setEnabled(enable);;
+        imgBtnSelectFiles.setEnabled(enable);;
+        imgBtnClearFiles.setEnabled(enable);;
+        imgBtnSelectLocation.setEnabled(enable);;
+        imgBtnEncrypt.setEnabled(enable);;
+        imgBtnDecrypt.setEnabled(enable);;
     }
 
     // ##################################################################################
@@ -429,10 +471,16 @@ public class BethelaActivity extends AppCompatActivity {
                                 Toast.makeText(BethelaActivity.this, "Encrypted " + finalRes + "/" + totalFiles, Toast.LENGTH_SHORT).show();
                             }
                             btnClearFiles(null);
+
+                            progressBar.setVisibility(View.INVISIBLE);
+                            allBtnSetEnabled(true);
                         }
                     });
                 }
             };
+
+            allBtnSetEnabled(false);
+            progressBar.setVisibility(View.VISIBLE);
 
             Thread thread = new Thread(runnable);
             thread.start();
@@ -471,11 +519,18 @@ public class BethelaActivity extends AppCompatActivity {
                             } else {
                                 Toast.makeText(BethelaActivity.this, "Decrypted " + finalRes + "/" + totalFiles, Toast.LENGTH_SHORT).show();
                             }
+
                             btnClearFiles(null);
+
+                            progressBar.setVisibility(View.INVISIBLE);
+                            allBtnSetEnabled(true);
                         }
                     });
                 }
             };
+
+            allBtnSetEnabled(false);
+            progressBar.setVisibility(View.VISIBLE);
 
             Thread thread = new Thread(runnable);
             thread.start();

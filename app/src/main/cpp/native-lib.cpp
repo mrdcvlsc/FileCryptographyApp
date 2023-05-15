@@ -15,11 +15,13 @@
 using namespace Krypt;
 using namespace Jpp;
 
-//constexpr static jsize MB = 32;
-//constexpr static jsize BUFFER_SIZE = MB * 1024 * 1024;
+constexpr static jsize MB = 3;
+
+/// release buffer size.
+constexpr static jsize BUFFER_SIZE = MB * 1024 * 1024;
 
 /// debug buffer size.
-constexpr static jsize BUFFER_SIZE = 32;
+//constexpr static jsize BUFFER_SIZE = 32;
 
 /// 5 characters.
 constexpr static size_t FILE_EXTENSION_SIZE = 5;
@@ -520,8 +522,6 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
           openFileUriInputStream(threadEnv, globalThis, target_uri._thiz)
         );
 
-        jbyteArray advanceReader = threadEnv->NewByteArray(BUFFER_SIZE);
-
         std::string outfname(target_file);
         std::string fileExtension = "";
 
@@ -549,17 +549,37 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
         OutputStream outgoing_bytes = Activity(threadEnv, globalThis).getApplicationContext().getContentResolver().openOutputStream(outputFile.getUri());
 
         jbyteArray fileSignature = threadEnv->NewByteArray(FILE_SIGNATURE_SIZE);
-        incoming_bytes.read(fileSignature);
-        readIncomingByteLength.read(advanceReader);
+        int incoming_byte_size = incoming_bytes.read(fileSignature);
+
+        if (incoming_byte_size != FILE_SIGNATURE_SIZE) {
+          incoming_bytes.close();
+          outgoing_bytes.close();
+          outputFile.Delete();
+          continue;
+        }
 
         const jbyte fileSig[FILE_SIGNATURE_SIZE] = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
         jbyte *fileSigRead = threadEnv->GetByteArrayElements(fileSignature, NULL);
+
+        bool fileSignatureIncorrect = false;
+        for (int i = 0; i < FILE_SIGNATURE_SIZE; ++i) {
+          if (fileSig[i] != fileSigRead[i]) {
+            fileSignatureIncorrect = true;
+            break;
+          }
+        }
+
+        if (fileSignatureIncorrect) {
+          incoming_bytes.close();
+          outgoing_bytes.close();
+          outputFile.Delete();
+          continue;
+        }
 
         jint length;
         jbyteArray jniBuffer = threadEnv->NewByteArray(BUFFER_SIZE);
         jbyteArray jniIV = threadEnv->NewByteArray(AES_BLOCK_SIZE);
         incoming_bytes.read(jniIV);
-        readIncomingByteLength.read(advanceReader);
         jbyte *iv = threadEnv->GetByteArrayElements(jniIV, NULL);
 
         std::string properFileExtension = ".bthl";
@@ -622,6 +642,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 
         if (remainingBlocks) {
           prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+
           for (; index < remainingBlocks - excludeLastBlock; ++index) {
             aes_scheme.blockDecrypt(
               reinterpret_cast<unsigned char *>(prevBuffer + (index * AES_BLOCK_SIZE)),
@@ -629,6 +650,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
               reinterpret_cast<unsigned char *>(iv)
             );
           }
+
           threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
           threadEnv->SetByteArrayRegion(
             prevJniBuffer, 0, (remainingBlocks - excludeLastBlock) * AES_BLOCK_SIZE,
@@ -641,6 +663,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
         Krypt::ByteArray recover;
 
         prevBuffer = threadEnv->GetByteArrayElements(prevJniBuffer, NULL);
+
         if (excludeLastBlock) {
           recover = aes_scheme.decrypt(
             reinterpret_cast<unsigned char *>(prevBuffer + (index * AES_BLOCK_SIZE)),
@@ -654,6 +677,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
             reinterpret_cast<unsigned char *>(iv)
           );
         }
+
         threadEnv->ReleaseByteArrayElements(prevJniBuffer, prevBuffer, 0);
         threadEnv->ReleaseByteArrayElements(jniIV, iv, 0);
 
