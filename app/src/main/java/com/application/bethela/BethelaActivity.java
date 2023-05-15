@@ -92,6 +92,14 @@ public class BethelaActivity extends AppCompatActivity {
         urisFiles = new ArrayList<>();
 
         keyFileMode = true;
+
+        if (checkAesCodeImplementation() == 0) {
+            Toast.makeText(this, "AES - Portable C++ (Slow)", Toast.LENGTH_LONG).show();
+        } else if (checkAesCodeImplementation() == 1) {
+            Toast.makeText(this, "AES - ARM Neon (fast)", Toast.LENGTH_LONG).show();
+        } else {
+            Toast.makeText(this, "AES - cannot detect implementation", Toast.LENGTH_LONG).show();
+        }
     }
 
     // ##################################################################################
@@ -543,4 +551,6 @@ public class BethelaActivity extends AppCompatActivity {
 
     private native int encryptFiles(byte[] keyFile, ArrayList<Uri> targetFiles, Uri outputPath);
     private native int decryptFiles(byte[] keyFile, ArrayList<Uri> targetFiles, Uri outputPath);
+
+    private native int checkAesCodeImplementation();
 }

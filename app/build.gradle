@@ -20,7 +20,7 @@ android {
 //                arguments "-DANDROID_STL=c++_shared"
 
                 // Set C++ version
-                cppFlags '-std=c++14'
+                cppFlags '-std=c++14', '-march=armv8-a+crypto', '-O3'
             }
         }
     }

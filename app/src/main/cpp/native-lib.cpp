@@ -9,13 +9,16 @@
 #include <chrono>
 #include <limits>
 #include <android/log.h>
+
+#define USE_ARM_AES
+
 #include "Krypt/src/Krypt.hpp"
 #include "jpp.hpp"
 
 using namespace Krypt;
 using namespace Jpp;
 
-constexpr static jsize MB = 3;
+constexpr static jsize MB = 1;
 
 /// release buffer size.
 constexpr static jsize BUFFER_SIZE = MB * 1024 * 1024;
@@ -742,4 +745,10 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
   env->DeleteGlobalRef(globalOutputPath);
 
   return cnt.load(std::memory_order_relaxed);
+}
+
+extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_checkAesCodeImplementation (
+  JNIEnv *env, jobject thiz
+) {
+  return Krypt::BlockCipher::AES::aes_implementation();
 }
