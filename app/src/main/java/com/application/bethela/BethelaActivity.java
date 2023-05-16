@@ -97,6 +97,8 @@ public class BethelaActivity extends AppCompatActivity {
             Toast.makeText(this, "AES - Portable C++ (Slow)", Toast.LENGTH_LONG).show();
         } else if (checkAesCodeImplementation() == 1) {
             Toast.makeText(this, "AES - ARM Neon (fast)", Toast.LENGTH_LONG).show();
+        } else if (checkAesCodeImplementation() == 2) {
+            Toast.makeText(this, "AES - AES-NI (fast)", Toast.LENGTH_LONG).show();
         } else {
             Toast.makeText(this, "AES - cannot detect implementation", Toast.LENGTH_LONG).show();
         }
@@ -108,14 +110,14 @@ public class BethelaActivity extends AppCompatActivity {
 
     private void allBtnSetEnabled(boolean enable) {
         imgBtnSelectKeyFile.setEnabled(enable);
-        imgBtnSelectPassword.setEnabled(enable);;
-        imgBtnGenerateKey.setEnabled(enable);;
-        imgBtnClearKeys.setEnabled(enable);;
-        imgBtnSelectFiles.setEnabled(enable);;
-        imgBtnClearFiles.setEnabled(enable);;
-        imgBtnSelectLocation.setEnabled(enable);;
-        imgBtnEncrypt.setEnabled(enable);;
-        imgBtnDecrypt.setEnabled(enable);;
+        imgBtnSelectPassword.setEnabled(enable);
+        imgBtnGenerateKey.setEnabled(enable);
+        imgBtnClearKeys.setEnabled(enable);
+        imgBtnSelectFiles.setEnabled(enable);
+        imgBtnClearFiles.setEnabled(enable);
+        imgBtnSelectLocation.setEnabled(enable);
+        imgBtnEncrypt.setEnabled(enable);
+        imgBtnDecrypt.setEnabled(enable);
     }
 
     // ##################################################################################

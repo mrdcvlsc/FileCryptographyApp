@@ -10,7 +10,11 @@
 #include <limits>
 #include <android/log.h>
 
+#if defined(__x86_64__) || defined(_M_X64)
+#define USE_AESNI
+#elif defined(__aarch64__) || defined(_M_ARM64)
 #define USE_ARM_AES
+#endif
 
 #include "Krypt/src/Krypt.hpp"
 #include "jpp.hpp"
@@ -34,120 +38,6 @@ constexpr static jint FILE_SIGNATURE_SIZE = 7;
 
 /// the size of one AES block in bytes.
 constexpr static size_t AES_BLOCK_SIZE = 16;
-
-extern "C" JNIEXPORT jstring JNICALL Java_com_application_bethela_BethelaActivity_doubleString (
-  JNIEnv *env,
-  jobject,
-  jstring arg
-) {
-  jboolean isCopy = 1;
-  const char *c_str_arg = env->GetStringUTFChars(arg, &isCopy);
-  std::string test(c_str_arg);
-  test += " | 2" + test + " : ";
-  jstring doubleString = env->NewStringUTF(test.c_str());
-  delete[] c_str_arg;
-  return doubleString;
-}
-
-extern "C" JNIEXPORT jbyteArray JNICALL Java_com_application_bethela_BethelaActivity_doubleByte (
-  JNIEnv *env,
-  jobject,
-  jbyteArray arg,
-  jint size
-) {
-  jbyte *read_only = env->GetByteArrayElements(arg, nullptr);
-
-  jbyteArray doubleArray = env->NewByteArray(size * 2);
-  env->SetByteArrayRegion(doubleArray, 0, size, read_only);
-  env->SetByteArrayRegion(doubleArray, size, size, read_only);
-
-  env->ReleaseByteArrayElements(arg, read_only, 0);
-
-  return doubleArray;
-}
-
-extern "C" JNIEXPORT jobjectArray JNICALL Java_com_application_bethela_BethelaActivity_transpose (
-  JNIEnv *env,
-  jobject,
-  jobjectArray arr,
-  jint row,
-  jint column
-) {
-  // Create a vector that will hold the original jintArray rows
-  std::vector<jintArray> original_rows;
-
-  // Allocate an array of pointers that will contain the copy/reference of the rows
-  jint **row_elements = new jint *[row];
-
-  for (jsize i = 0; i < row; ++i) {
-    // get the `jintArray` row at index `i` of the `jobjectArray arr`, push it to a vector
-    original_rows.push_back((jintArray) env->GetObjectArrayElement(arr, i));
-
-    // create a copy/reference buffer of the aquired `jintArray`
-    row_elements[i] = env->GetIntArrayElements(original_rows.back(), nullptr);
-  }
-
-  // Allocate a new C 2D array for the transpose and apply the transpose
-  jint **transposed_row_elements = new jint *[column];
-  for (jsize i = 0; i < column; ++i) {
-    transposed_row_elements[i] = new jint[row];
-    for (jsize j = 0; j < row; ++j) {
-      transposed_row_elements[i][j] = row_elements[j][i];
-    }
-  }
-
-  // create a new jobjectArray that will contain the transpose 2D array values
-  jclass jintArrayClass = env->FindClass("[I");
-  jobjectArray transposed = env->NewObjectArray(column, jintArrayClass, nullptr);
-
-  for (jsize i = 0; i < column; ++i) {
-    // create a new jintArray
-    jintArray curr_row = env->NewIntArray(row);
-
-    // set the values of the new jintArray using the values of the transposed matrix
-    env->SetIntArrayRegion(curr_row, 0, row, transposed_row_elements[i]);
-
-    // add the row jintArray to the main jobjectArray transpose matrix
-    env->SetObjectArrayElement(transposed, i, curr_row);
-  }
-
-  // release the copy/reference buffers of the original rows that we got from the first loop
-  for (jsize i = 0; i < row; ++i) {
-    env->ReleaseIntArrayElements(original_rows[i], row_elements[i], 0);
-  }
-
-  // deallocate all of the C++ array that we allocated using C++ convention
-  for (jsize i = 0; i < column; ++i) {
-    delete[] transposed_row_elements[i];
-  }
-
-  delete[] transposed_row_elements;
-  delete[] row_elements;
-
-  return transposed;
-}
-
-extern "C" JNIEXPORT jintArray JNICALL Java_com_application_bethela_BethelaActivity_reverse (
-  JNIEnv *env,
-  jobject,
-  jintArray arr,
-  jint size
-) {
-  // A C array that could be a copy or a direct pointer to `arr`
-  jint *reverse_array = env->GetIntArrayElements(arr, nullptr);
-
-  // reverse the array
-  for (jsize i = 0; i < size / 2; ++i) {
-    jint temp = reverse_array[i];
-    reverse_array[i] = reverse_array[size - 1 - i];
-    reverse_array[size - 1 - i] = temp;
-  }
-
-  // free the C array and apply the changes back to the `arr`
-  env->ReleaseIntArrayElements(arr, reverse_array, 0);
-
-  return arr;
-}
 
 namespace RESULT_CODE {
   jint INVALID_INTERNAL_BUFFER_SIZE = -1;
