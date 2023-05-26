@@ -25,7 +25,7 @@ using namespace Jpp;
 constexpr static jsize MB = 1;
 
 /// release buffer size.
-constexpr static jsize BUFFER_SIZE = MB * 1024 * 1024;
+constexpr static jsize BUFFER_SIZE = (MB * 1024 * 1024) + ((MB * 1024 * 1024) / 8);
 
 /// debug buffer size.
 //constexpr static jsize BUFFER_SIZE = 32;
@@ -77,7 +77,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
 ) {
   ArrayList<Uri> file_queue(env, target_files);
 
-  jbyte *aeskey = env->GetByteArrayElements(key_file, nullptr);
+  auto *aeskey = (jbyte *) env->GetPrimitiveArrayCritical(key_file, nullptr);
   jint aeskey_size = env->GetArrayLength(key_file);
 
   Mode::CBC<BlockCipher::AES, Padding::PKCS_5_7> aes_scheme(
@@ -85,17 +85,18 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
     aeskey_size
   );
 
-  env->ReleaseByteArrayElements(key_file, aeskey, 0);
+  env->ReleasePrimitiveArrayCritical(key_file, aeskey, JNI_ABORT);
 
   std::atomic<jint> cnt(0);
   std::mutex vector_mtx;
 
-  if (BUFFER_SIZE % AES_BLOCK_SIZE != 0 || BUFFER_SIZE <= AES_BLOCK_SIZE) {
+  if constexpr (BUFFER_SIZE % AES_BLOCK_SIZE != 0 || BUFFER_SIZE <= AES_BLOCK_SIZE) {
     return RESULT_CODE::INVALID_INTERNAL_BUFFER_SIZE;
   }
 
   JavaVM* javaVM;
   env->GetJavaVM((_JavaVM**) &javaVM);
+
   jobject DocumentFileClass = env->NewGlobalRef((jobject) env->FindClass("androidx/documentfile/provider/DocumentFile"));
   jobject globalThis = env->NewGlobalRef(thiz);
   jobject globalOutputPath = env->NewGlobalRef(output_path);
@@ -106,7 +107,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
     jint isDifferentThread = javaVM->GetEnv((void **) &threadEnv, JNI_VERSION_1_6);
 
     if (isDifferentThread == JNI_EDETACHED) {
-      javaVM->AttachCurrentThread((_JNIEnv**) &threadEnv, NULL);
+      javaVM->AttachCurrentThread((_JNIEnv**) &threadEnv, nullptr);
     } else if (isDifferentThread == JNI_OK) {
       threadEnv = env;
     } else {
@@ -116,7 +117,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
 
     bool run_thread = true;
 
-    Bytes *encryptedBuffer = new Bytes[BUFFER_SIZE];
+    auto *encryptedBuffer = new Bytes[BUFFER_SIZE];
 
     std::string target_file;
 
@@ -131,7 +132,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
           target_uri._thiz = file_queue.remove(threadEnv, file_queue.size(threadEnv) - 1)._thiz;
           target_uri._Jclass = threadEnv->GetObjectClass(target_uri._thiz);
           jstring filename = getFileName(threadEnv, globalThis, target_uri._thiz);
-          const char *c_filename_buffer = threadEnv->GetStringUTFChars(filename, NULL);
+          const char *c_filename_buffer = threadEnv->GetStringUTFChars(filename, nullptr);
           target_file = std::string(c_filename_buffer);
           threadEnv->ReleaseStringUTFChars(filename, c_filename_buffer);
         } else {
@@ -211,7 +212,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
             break;
           }
 
-          prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, NULL);
+          prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, nullptr);
           for (size_t index = 0; index < prevBufferSize; index += AES_BLOCK_SIZE) {
             aes_scheme.blockEncrypt(
               reinterpret_cast<unsigned char *>(prevBuffer + index),
@@ -239,7 +240,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
         bool excludeLastBlock = (remainingBlocks && remainingBytes == 0);
 
         if (remainingBlocks) {
-          prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, NULL);
+          prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, nullptr);
 
           for (; index < remainingBlocks - excludeLastBlock; ++index) {
             aes_scheme.blockEncrypt(
@@ -258,7 +259,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
 
         Krypt::ByteArray cipher;
 
-        prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, NULL);
+        prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, nullptr);
         if (excludeLastBlock) {
           cipher = aes_scheme.encrypt(
             reinterpret_cast<unsigned char *>(prevBuffer + (index * AES_BLOCK_SIZE)), AES_BLOCK_SIZE, iv
@@ -272,7 +273,9 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
 
         threadEnv->SetByteArrayRegion(
           prevJniBuffer, 0, cipher.length,
-          reinterpret_cast<jbyte *>(cipher.array));
+          reinterpret_cast<jbyte *>(cipher.array)
+        );
+
         outgoing_bytes.write(prevJniBuffer, 0, cipher.length);
 
         if (threadEnv->ExceptionCheck()) {
@@ -300,7 +303,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
     }
   };
 
-  int physical_threads = std::thread::hardware_concurrency();
+  int physical_threads = (int) std::thread::hardware_concurrency();
 
   std::vector<std::thread> threads;
 
@@ -310,7 +313,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
     vector_mtx.unlock();
 
     if (notEmpty) {
-      threads.push_back(std::thread(encrypt_lambda));
+      threads.emplace_back(encrypt_lambda);
     }
   }
 
@@ -322,8 +325,8 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_e
     encrypt_lambda();
   }
 
-  for (size_t i = 0; i < threads.size(); ++i) {
-    threads[i].join();
+  for (auto & thrd : threads) {
+    thrd.join();
   }
 
   env->DeleteGlobalRef(DocumentFileClass);
@@ -341,7 +344,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 ) {
   ArrayList<Uri> file_queue(env, target_files);
 
-  jbyte *aeskey = env->GetByteArrayElements(key_file, nullptr);
+  auto *aeskey = (jbyte *) env->GetPrimitiveArrayCritical(key_file, nullptr);
   jint aeskey_size = env->GetArrayLength(key_file);
 
   Mode::CBC<BlockCipher::AES, Padding::PKCS_5_7> aes_scheme(
@@ -349,12 +352,12 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
     aeskey_size
   );
 
-  env->ReleaseByteArrayElements(key_file, aeskey, 0);
+  env->ReleasePrimitiveArrayCritical(key_file, aeskey, JNI_ABORT);
 
   std::atomic<jint> cnt(0);
   std::mutex vector_mtx;
 
-  if (BUFFER_SIZE % AES_BLOCK_SIZE != 0 || BUFFER_SIZE <= AES_BLOCK_SIZE) {
+  if constexpr (BUFFER_SIZE % AES_BLOCK_SIZE != 0 || BUFFER_SIZE <= AES_BLOCK_SIZE) {
     return RESULT_CODE::INVALID_INTERNAL_BUFFER_SIZE;
   }
 
@@ -370,7 +373,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
     jint isDifferentThread = javaVM->GetEnv((void **) &threadEnv, JNI_VERSION_1_6);
 
     if (isDifferentThread == JNI_EDETACHED) {
-      javaVM->AttachCurrentThread((_JNIEnv**) &threadEnv, NULL);
+      javaVM->AttachCurrentThread((_JNIEnv**) &threadEnv, nullptr);
     } else if (isDifferentThread == JNI_OK) {
       threadEnv = env;
     } else {
@@ -380,7 +383,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 
     bool run_thread = true;
 
-    Bytes *decryptedBuffer = new Bytes[BUFFER_SIZE];
+    auto *decryptedBuffer = new Bytes[BUFFER_SIZE];
 
     std::string target_file;
 
@@ -395,7 +398,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
           target_uri._thiz = file_queue.remove(threadEnv, 0)._thiz;
           target_uri._Jclass = threadEnv->GetObjectClass(target_uri._thiz);
           jstring filename = getFileName(threadEnv, globalThis, target_uri._thiz);
-          const char *c_filename_buffer = threadEnv->GetStringUTFChars(filename, NULL);
+          const char *c_filename_buffer = threadEnv->GetStringUTFChars(filename, nullptr);
           target_file = std::string(c_filename_buffer);
           threadEnv->ReleaseStringUTFChars(filename, c_filename_buffer);
         } else {
@@ -416,7 +419,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
         );
 
         std::string outfname(target_file);
-        std::string fileExtension = "";
+        std::string fileExtension;
 
         if (outfname.size() > FILE_EXTENSION_SIZE) {
           fileExtension = outfname.substr(outfname.size() - FILE_EXTENSION_SIZE, FILE_EXTENSION_SIZE);
@@ -452,7 +455,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
         }
 
         const jbyte fileSig[FILE_SIGNATURE_SIZE] = {0x42, 0x45, 0x54, 0x48, 0x45, 0x4c, 0x41};
-        jbyte *fileSigRead = threadEnv->GetByteArrayElements(fileSignature, NULL);
+        auto *fileSigRead = (jbyte *) threadEnv->GetPrimitiveArrayCritical(fileSignature, nullptr);
 
         bool fileSignatureIncorrect = false;
         for (int i = 0; i < FILE_SIGNATURE_SIZE; ++i) {
@@ -461,6 +464,9 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
             break;
           }
         }
+
+        jboolean signFailed = std::memcmp(fileSigRead, fileSig, FILE_SIGNATURE_SIZE);
+        threadEnv->ReleasePrimitiveArrayCritical(fileSignature, fileSigRead, JNI_ABORT);
 
         if (fileSignatureIncorrect) {
           incoming_bytes.close();
@@ -473,15 +479,12 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
         jbyteArray jniBuffer = threadEnv->NewByteArray(BUFFER_SIZE);
         jbyteArray jniIV = threadEnv->NewByteArray(AES_BLOCK_SIZE);
         incoming_bytes.read(jniIV);
-        jbyte *iv = threadEnv->GetByteArrayElements(jniIV, NULL);
+        jbyte *iv = threadEnv->GetByteArrayElements(jniIV, nullptr);
 
         std::string properFileExtension = ".bthl";
 
-        jboolean signFailed = std::memcmp(fileSigRead, fileSig, FILE_SIGNATURE_SIZE);
         jboolean wrongFileExtension = fileExtension != properFileExtension;
         jboolean JNIException = threadEnv->ExceptionCheck();
-
-        threadEnv->ReleaseByteArrayElements(fileSignature, fileSigRead, 0);
 
         if (signFailed || wrongFileExtension || JNIException) {
           if (JNIException) {
@@ -506,7 +509,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
             break;
           }
 
-          prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, NULL);
+          prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, nullptr);
           for (size_t index = 0; index < prevBufferSize; index += AES_BLOCK_SIZE) {
             aes_scheme.blockDecrypt(
               reinterpret_cast<unsigned char *>(prevBuffer + index),
@@ -518,7 +521,9 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 
           threadEnv->SetByteArrayRegion(
             prevJniBuffer, 0, prevBufferSize,
-            reinterpret_cast<jbyte *>(decryptedBuffer));
+            reinterpret_cast<jbyte *>(decryptedBuffer)
+          );
+
           outgoing_bytes.write(prevJniBuffer, 0, prevBufferSize);
 
           std::swap(prevJniBuffer, nextJniBuffer);
@@ -534,8 +539,8 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
         bool excludeLastBlock = (remainingBlocks && remainingBytes == 0);
 
         if (remainingBlocks) {
-          prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, NULL);
 
+          prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, nullptr);
           for (; index < remainingBlocks - excludeLastBlock; ++index) {
             aes_scheme.blockDecrypt(
               reinterpret_cast<unsigned char *>(prevBuffer + (index * AES_BLOCK_SIZE)),
@@ -543,8 +548,8 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
               reinterpret_cast<unsigned char *>(iv)
             );
           }
-
           threadEnv->ReleasePrimitiveArrayCritical(prevJniBuffer, prevBuffer, JNI_ABORT);
+
           threadEnv->SetByteArrayRegion(
             prevJniBuffer, 0, (remainingBlocks - excludeLastBlock) * AES_BLOCK_SIZE,
             reinterpret_cast<jbyte *>(decryptedBuffer)
@@ -555,8 +560,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
 
         Krypt::ByteArray recover;
 
-        prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, NULL);
-
+        prevBuffer = (jbyte *) threadEnv->GetPrimitiveArrayCritical(prevJniBuffer, nullptr);
         if (excludeLastBlock) {
           recover = aes_scheme.decrypt(
             reinterpret_cast<unsigned char *>(prevBuffer + (index * AES_BLOCK_SIZE)),
@@ -570,9 +574,9 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
             reinterpret_cast<unsigned char *>(iv)
           );
         }
-
         threadEnv->ReleasePrimitiveArrayCritical(prevJniBuffer, prevBuffer, JNI_ABORT);
-        threadEnv->ReleaseByteArrayElements(jniIV, iv, 0);
+
+        threadEnv->ReleaseByteArrayElements(jniIV, iv, JNI_ABORT);
 
         threadEnv->SetByteArrayRegion(
           prevJniBuffer, 0, recover.length,
@@ -604,7 +608,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
     }
   };
 
-  int physical_threads = std::thread::hardware_concurrency();
+  int physical_threads = (int) std::thread::hardware_concurrency();
 
   std::vector<std::thread> threads;
 
@@ -614,7 +618,7 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
     vector_mtx.unlock();
 
     if (notEmpty) {
-      threads.push_back(std::thread(decrypt_lambda));
+      threads.emplace_back(decrypt_lambda);
     }
   }
 
@@ -626,8 +630,8 @@ extern "C" JNIEXPORT jint JNICALL Java_com_application_bethela_BethelaActivity_d
     decrypt_lambda();
   }
 
-  for (size_t i = 0; i < threads.size(); ++i) {
-    threads[i].join();
+  for (auto & thrd : threads) {
+    thrd.join();
   }
 
   env->DeleteGlobalRef(DocumentFileClass);

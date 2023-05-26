@@ -187,7 +187,7 @@ public class BethelaActivity extends AppCompatActivity {
                     for (int i = 0; i < urisFiles.size(); ++i) {
                         displayTargetFiles
                             .append(getFileName(getApplicationContext(), urisFiles.get(i)))
-                            .append("\n\n");
+                            .append("\n");
                     }
 
                     tvFiles.setText(displayTargetFiles.toString());
@@ -466,19 +466,24 @@ public class BethelaActivity extends AppCompatActivity {
                 @Override
                 public void run() {
                     int res = 0;
+                    long totalTime = 0;
 
                     synchronized (this) {
+                        long startTime = System.nanoTime();
                         res = encryptFiles(AES256_KEY, urisFiles, uriOutputFolder);
+                        long endTime = System.nanoTime();
+                        totalTime = (endTime - startTime) / 1000000000L;
                     }
 
                     int finalRes = res;
+                    long finalTotalTime = totalTime;
                     handler.post(new Runnable() {
                         @Override
                         public void run() {
                             if (finalRes < 0) {
                                 Toast.makeText(BethelaActivity.this, "Encrypt Error, Invalid Internal Buffer", Toast.LENGTH_SHORT).show();
                             } else {
-                                Toast.makeText(BethelaActivity.this, "Encrypted " + finalRes + "/" + totalFiles, Toast.LENGTH_SHORT).show();
+                                Toast.makeText(BethelaActivity.this, "Encrypted " + finalRes + "/" + totalFiles + " | " + finalTotalTime + "s", Toast.LENGTH_SHORT).show();
                             }
                             btnClearFiles(null);
 
@@ -515,19 +520,24 @@ public class BethelaActivity extends AppCompatActivity {
                 @Override
                 public void run() {
                     int res = 0;
+                    long totalTime = 0;
 
                     synchronized (this) {
+                        long startTime = System.nanoTime();
                         res = decryptFiles(AES256_KEY, urisFiles, uriOutputFolder);
+                        long endTime = System.nanoTime();
+                        totalTime = (endTime - startTime) / 1000000000L;
                     }
 
                     int finalRes = res;
+                    long finalTotalTime = totalTime;
                     handler.post(new Runnable() {
                         @Override
                         public void run() {
                             if (finalRes < 0) {
                                 Toast.makeText(BethelaActivity.this, "Decrypt Error, Invalid Internal Buffer", Toast.LENGTH_SHORT).show();
                             } else {
-                                Toast.makeText(BethelaActivity.this, "Decrypted " + finalRes + "/" + totalFiles, Toast.LENGTH_SHORT).show();
+                                Toast.makeText(BethelaActivity.this, "Decrypted " + finalRes + "/" + totalFiles + " | " + finalTotalTime + "s", Toast.LENGTH_SHORT).show();
                             }
 
                             btnClearFiles(null);
